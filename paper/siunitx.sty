@@ -1,0 +1,66 @@
+%% Minimal siunitx shim.
+%% Replace with real siunitx package before submission.
+\ProvidesPackage{siunitx}[2026/06/30 minimal shim]
+\RequirePackage{amsmath,textcomp}
+
+% --- SI prefix macros (produce \mathrm text, safe in math) ---
+\newcommand{\yotta}{\mathrm{Y}}
+\newcommand{\zetta}{\mathrm{Z}}
+\newcommand{\exa}{\mathrm{E}}
+\newcommand{\peta}{\mathrm{P}}
+\newcommand{\tera}{\mathrm{T}}
+\newcommand{\giga}{\mathrm{G}}
+\newcommand{\mega}{\mathrm{M}}
+\newcommand{\kilo}{\mathrm{k}}
+\newcommand{\hecto}{\mathrm{h}}
+\newcommand{\deca}{\mathrm{da}}
+\newcommand{\deci}{\mathrm{d}}
+\newcommand{\centi}{\mathrm{c}}
+\newcommand{\milli}{\mathrm{m}}
+\newcommand{\micro}{\ensuremath{\mu}}
+\newcommand{\nano}{\mathrm{n}}
+\newcommand{\pico}{\mathrm{p}}
+\newcommand{\femto}{\mathrm{f}}
+
+% --- SI unit macros ---
+\newcommand{\metre}{\mathrm{m}}
+\newcommand{\meter}{\mathrm{m}}
+\newcommand{\gram}{\mathrm{g}}
+\newcommand{\kilogram}{\mathrm{kg}}
+\newcommand{\second}{\mathrm{s}}
+\newcommand{\ampere}{\mathrm{A}}
+\newcommand{\kelvin}{\mathrm{K}}
+\newcommand{\mole}{\mathrm{mol}}
+\newcommand{\candela}{\mathrm{cd}}
+\newcommand{\hertz}{\mathrm{Hz}}
+\newcommand{\newton}{\mathrm{N}}
+\newcommand{\pascal}{\mathrm{Pa}}
+\newcommand{\joule}{\mathrm{J}}
+\newcommand{\watt}{\mathrm{W}}
+\newcommand{\volt}{\mathrm{V}}
+\newcommand{\ohm}{\mathrm{\Omega}}
+\newcommand{\siemens}{\mathrm{S}}
+\newcommand{\farad}{\mathrm{F}}
+\newcommand{\henry}{\mathrm{H}}
+\newcommand{\tesla}{\mathrm{T}}
+\newcommand{\weber}{\mathrm{Wb}}
+\newcommand{\radian}{\mathrm{rad}}
+\newcommand{\steradian}{\mathrm{sr}}
+\newcommand{\decibel}{\mathrm{dB}}
+\newcommand{\bit}{\mathrm{bit}}
+\newcommand{\byte}{\mathrm{B}}
+
+% --- Compound helpers ---
+\newcommand{\per}{/}
+\newcommand{\squared}{^{2}}
+\newcommand{\cubed}{^{3}}
+\newcommand{\tothe}[1]{^{#1}}
+
+% --- Main user commands ---
+% \si{unit}: unit in math mode
+\newcommand{\si}[1]{\ensuremath{#1}}
+% \SI{value}{unit}: value,unit both in math
+\newcommand{\SI}[2]{\ensuremath{#1\,#2}}
+
+% --- degree symbol (avoid clash with gensymb) ---
+\providecommand{\degree}{^{\circ}}

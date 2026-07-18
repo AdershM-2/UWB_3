@@ -1,0 +1,24 @@
+% ============================================================================
+% Abstract — TARGET: 150-200 words for IEEE
+% ============================================================================
+
+Autonomous mobile robots operating in GPS-denied unstructured environments---sandy
+terrain, planetary analogues, agricultural fields, and industrial inspection
+sites---require reliable localization that functions without visual
+features, structured infrastructure, or expensive motion-capture rigs.
+We present \textbf{DUNE} (Dual-tag UWB Navigation Engine), an ultra-wideband
+real-time localization system delivering full six-degree-of-freedom
+(6-DOF: $x, y, z, \phi, \theta, \psi$) pose estimation for a 13-DOF
+rocker--bogie mobile manipulator.
+Three contributions distinguish DUNE from all prior Decawave DW1000 implementations:
+(i)~a dual-tag geometry providing metric heading directly from two tag positions,
+combined with a five-anchor 3D deployment and BNO085 IMU fusion for complete
+roll--pitch--yaw and XYZ;
+(ii)~a two-tier in-situ calibration---per-board antenna-delay binary search
+followed by a position-dependent spatial error map---validated against a documented
+double-correction failure in naive software-bias approaches;
+and (iii)~same-frame first-path/receive-power NLOS scoring with continuous weighted
+multilateration, correcting a cross-link measurement error present in all
+existing libraries.
+Experiments on a sandy indoor testbed with an overhead Kinect~v2 + AprilTag
+ground-truth system demonstrate \todo{X}\,cm 2D RMSE at \SI{\approx10}{\hertz}.

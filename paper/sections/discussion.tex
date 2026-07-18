@@ -1,0 +1,44 @@
+% ============================================================================
+% Discussion
+% ============================================================================
+
+\subsection{Limitations}
+
+\textbf{EKF is 2D; Z is solved separately.}
+The FusionEKF state is currently 2D (position + velocity + bias in XY).
+With five anchors including one elevated, $z$ is geometrically observable
+from trilateration, but is not yet a formal EKF state.
+Extending to a 9-state 3D EKF is the recommended next step; the host already
+outputs $z$ from the LM solver as a scalar sidecar to the EKF fix.
+
+\textbf{Update rate.}
+The synchronous-blocking \texttt{sweep()} limits the UWB measurement rate
+to $\approx10$\,Hz.
+IMU prediction between sweeps decouples position smoothness (IMU, 100\,Hz)
+from position accuracy (UWB, 10\,Hz), but closed-loop control demanding
+faster position feedback would benefit from asynchronous scheduling.
+
+\textbf{Multi-tag collisions.}
+Multiple tags share the channel without coordination.
+Collision probability is low for 2--3 tags at 10\,Hz but increases with more.
+Full TDMA superframe coordination is required for deterministic multi-tag
+scaling beyond three tags.
+
+\subsection{Diagnostics and Known Issues}
+
+\textbf{6.8 Mbps mode failure.}
+We attempted to switch to \texttt{MODE\_SHORTDATA\_FAST\_ACCURACY}
+(6.8\,Mbps, 128-symbol preamble, 1500\,\textmu s reply delay),
+which would raise sweep rate to $\approx35$--45\,Hz.
+All boards failed simultaneously, indicating a driver-level or SPI timing
+incompatibility rather than a single faulty board.
+The root cause is undiagnosed; we reverted to 110\,kbps / 5000\,\textmu s.
+\todo{If diagnosed before submission, replace with fix description.}
+
+\textbf{Spatial error map lag.}
+The Tier-2 correction $c_i(\hat{\mathbf{p}}_{t-1})$ uses the previous
+sweep's EKF position (one-step lag, $\approx100$\,ms).
+At walking speed this corresponds to $\approx10$\,cm of motion ---
+negligible for the IDW correction accuracy.
+At high speed or during abrupt turns, the correction lags by one sweep;
+the linear fade at grid boundaries limits the impact.

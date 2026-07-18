@@ -1,0 +1,29 @@
+% ============================================================================
+% Appendix B — Levenberg-Marquardt Multilateration
+% ============================================================================
+
+The residual for anchor $i$ at estimated position $\mathbf{p}$ is
+$r_i(\mathbf{p}) = \|\mathbf{p} - \mathbf{a}_i\|_2 - \rho_i$.
+The Jacobian row for anchor $i$ is
+\begin{equation}
+  \mathbf{J}_i = \frac{(\mathbf{p} - \mathbf{a}_i)^\top}{\|\mathbf{p} - \mathbf{a}_i\|_2}
+  \in \mathbb{R}^{1 \times d}.
+\end{equation}
+
+The LM update at iteration $k$ is
+\begin{equation}
+  \Delta\mathbf{p} = -\bigl(\mathbf{J}^\top \mathbf{W} \mathbf{J}
+    + \lambda \operatorname{diag}(\mathbf{J}^\top \mathbf{W} \mathbf{J} + 10^{-9}\mathbf{I})\bigr)^{-1}
+    \mathbf{J}^\top \mathbf{W} \mathbf{r},
+\end{equation}
+where $\mathbf{W} = \operatorname{diag}(w_i)$ and $\lambda$ is the
+Marquardt damping parameter.
+$\lambda$ is divided by 3 on a successful step and multiplied by 3 on failure,
+bounded in $[10^{-9},\;10^9]$.
+Convergence is declared when $\|\Delta\mathbf{p}\| < 10^{-6}$ or after 30 iterations.
+
+The output covariance is the GLS approximation:
+$\hat{\bm{\Sigma}} = \hat{\sigma}^2 (\mathbf{J}^\top \mathbf{W} \mathbf{J})^{-1}$,
+where $\hat{\sigma}^2 = \sigma_{\text{range}}^2 = (0.10\,\text{m})^2$ is the assumed
+range noise.
+This covariance is used as the EKF measurement noise matrix $\mathbf{R}$.

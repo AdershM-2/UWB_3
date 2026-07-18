@@ -1,0 +1,34 @@
+# ── Oversized / non-project files ───────────────────────────────────────────
+# Andy Weir novel (~153 MB) accidentally dropped in paper/. Exceeds GitHub's
+# 100 MB per-file hard limit — must never be committed. Move it out of the repo.
+paper/Project Hail Mary - Project Mary Hail.pdf
+
+# ── LaTeX build artifacts ────────────────────────────────────────────────────
+*.aux
+*.log
+*.out
+*.bbl
+*.blg
+*.synctex.gz
+*.fls
+*.fdb_latexmk
+*.toc
+*.lof
+*.lot
+*.tex.bak
+
+# ── MATLAB ───────────────────────────────────────────────────────────────────
+*.asv
+*.m~
+
+# ── Python ───────────────────────────────────────────────────────────────────
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# ── OS / editor junk ─────────────────────────────────────────────────────────
+Thumbs.db
+desktop.ini
+.DS_Store
+*.swp

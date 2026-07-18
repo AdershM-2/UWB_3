@@ -1,0 +1,274 @@
+% ============================================================================
+% References — UWB RTLS Paper
+%
+% Last verified: 2026-06-30.
+% Entries marked TODO still need page numbers / DOI / venue confirmation.
+% NEVER add a citation without reading the paper.
+% ============================================================================
+
+% ============================================================================
+% UWB FUNDAMENTALS
+% ============================================================================
+
+@techreport{dw1000_datasheet,
+  author       = {{Qorvo / Decawave}},
+  title        = {{DW1000 Ultra Wideband Transceiver IC User Manual and Datasheet}},
+  institution  = {Qorvo},
+  year         = {2017},
+  note         = {Version 2.18. TODO: confirm exact version and add URL.},
+}
+
+@techreport{aps006,
+  author       = {{Decawave}},
+  title        = {{APS006 Part 1 Application Note: Channel Effects on Communications Range
+                   and Time Stamp Accuracy}},
+  institution  = {Decawave},
+  year         = {2014},
+  note         = {APS006 Part 1. TODO: verify part number and year.},
+}
+
+@inproceedings{dstwr_neirynck,
+  author    = {Neirynck, Dries and Luk, Eric and McLaughlin, Michael},
+  title     = {An Alternative Double-Sided Two-Way Ranging Method},
+  booktitle = {Proceedings of the 2016 13th Workshop on Positioning, Navigation
+               and Communications (WPNC)},
+  year      = {2016},
+  pages     = {1--4},
+  doi       = {10.1109/WPNC.2016.7822844},
+  note      = {TODO: verify page numbers.},
+}
+
+% ============================================================================
+% OPEN-SOURCE DW1000 LIBRARIES
+% ============================================================================
+
+@misc{thotro_dw1000,
+  author       = {thotro},
+  title        = {{arduino-dw1000: Ranging with DW1000 UWB Transceivers}},
+  howpublished = {\url{https://github.com/thotro/arduino-dw1000}},
+  year         = {2016},
+  note         = {Archived 2019. Accessed 2026-06-30.},
+}
+
+% ============================================================================
+% UWB POSITIONING SURVEYS
+% ============================================================================
+
+@article{alarifi2016uwb,
+  author  = {Alarifi, Abdulrahman and Al-Salman, AbdulMalik and Alsaleh, Mansour
+             and Alnafessah, Ahmad and Al-Hadhrami, Suheer and Al-Ammar, Mazen A.
+             and Al-Khalifa, Hend S.},
+  title   = {Ultra Wideband Indoor Positioning Technologies: Analysis and Recent Advances},
+  journal = {Sensors},
+  volume  = {16},
+  number  = {5},
+  pages   = {707},
+  year    = {2016},
+  doi     = {10.3390/s16050707},
+}
+
+% UWB vs BLE vs Wi-Fi survey, MDPI Sensors 2025.
+% TODO: find the correct citation — mentioned in context of
+%       UWB 13.1 cm static / 29.9 cm dynamic, BLE/WiFi 88-93% worse.
+@article{uwb_sensors_survey_2025,
+  author  = {TODO},
+  title   = {TODO: Comprehensive survey of indoor positioning for mobile robots
+             reporting UWB 13.1 cm static, 29.9 cm dynamic error.},
+  journal = {Sensors},
+  year    = {2025},
+  note    = {TODO: find correct paper and verify all fields.},
+}
+
+% ============================================================================
+% NLOS MITIGATION
+% ============================================================================
+
+% FP-power NLOS mitigation for UWB positioning (originally TELFOR 2017).
+% Classifies LOS/NLOS/severe-NLOS from DW1000 first-path power; uses EKF for localization.
+% arXiv preprint 2403.19706 is the 2024 upload of this 2017 conference paper.
+% KEY RELEVANCE: same physical measurement (FP vs. total RX power); our contribution
+% is reading both from the same RANGE_REPORT frame (tag-side, same link) rather than
+% across different links, and integrating as a continuous weight rather than discrete class.
+@inproceedings{kolakowski2017nlos,
+  author    = {Kolakowski, Marcin and Modelski, Jozef},
+  title     = {First Path Component Power Based {NLOS} Mitigation in {UWB}
+               Positioning System},
+  booktitle = {Proceedings of the 25th Telecommunications Forum (TELFOR)},
+  year      = {2017},
+  address   = {Belgrade, Serbia},
+  note      = {Also available as arXiv:2403.19706. TODO: verify page numbers and DOI.},
+}
+
+% ============================================================================
+% ANCHOR CALIBRATION / SELF-SURVEY
+% ============================================================================
+
+@article{torgerson1952mds,
+  author  = {Torgerson, Warren S.},
+  title   = {Multidimensional Scaling: {I}. Theory and Method},
+  journal = {Psychometrika},
+  volume  = {17},
+  pages   = {401--419},
+  year    = {1952},
+  doi     = {10.1007/BF02288916},
+}
+
+% ACM Computing Surveys survey on UWB self-calibration and collaborative localization.
+% Ridolfi et al. 2021 — the comprehensive survey on self-calibration methods for UWB.
+@article{ridolfi2021selfcal,
+  author  = {Ridolfi, Matteo and Kaya, Abdil and Berkvens, Rafael and Weyn, Maarten
+             and Joseph, Wout and De Poorter, Eli},
+  title   = {Self-Calibration and Collaborative Localization for {UWB} Positioning
+             Systems: A Survey and Future Research Directions},
+  journal = {ACM Computing Surveys},
+  volume  = {54},
+  number  = {4},
+  year    = {2021},
+  doi     = {10.1145/3448303},
+  note    = {Article 77, published April 2021.},
+}
+
+% Large-Scale UWB Anchor Calibration via Gaussian Processes (NTU Singapore, ICRA 2025).
+% Uses LiDAR-Inertial Odometry as input; scales to seaport-size environments.
+% Distinction from our work: requires LiDAR; ours needs only UWB ranging.
+@inproceedings{yuan2025uwbgp,
+  author    = {Yuan, Shenghai and Lou, Boyang and Nguyen, Thien-Minh and Yin, Pengyu
+               and Cao, Muqing and Xu, Xinghang and Li, Jianping and Xu, Jie
+               and Chen, Siyu and Xie, Lihua},
+  title     = {Large-Scale {UWB} Anchor Calibration and One-Shot Localization
+               Using {Gaussian Process}},
+  booktitle = {Proceedings of the IEEE International Conference on Robotics
+               and Automation (ICRA)},
+  year      = {2025},
+  note      = {Also available as arXiv:2412.16880.},
+}
+
+% ATLAS: open-source TDOA-based UWB localization with anchor calibration.
+@inproceedings{tiemann2017atlas,
+  author    = {Tiemann, Janis and Schweikowski, Fabian and Wietfeld, Christian},
+  title     = {{ATLAS}: An Open-Source {TDOA}-Based Ultra-Wideband Localization System},
+  booktitle = {2016 International Conference on Indoor Positioning and Indoor Navigation (IPIN)},
+  year      = {2016},
+  doi       = {10.1109/IPIN.2016.7743707},
+  note      = {TODO: verify page numbers.},
+}
+
+% ============================================================================
+% SENSOR FUSION
+% ============================================================================
+
+@article{singer1970,
+  author  = {Singer, Robert A.},
+  title   = {Estimating Optimal Tracking Filter Performance for Manned
+             Maneuvering Targets},
+  journal = {IEEE Transactions on Aerospace and Electronic Systems},
+  volume  = {6},
+  number  = {4},
+  pages   = {473--483},
+  year    = {1970},
+  doi     = {10.1109/TAES.1970.310128},
+}
+
+% Robust Indoor Localization with Ranging-IMU Fusion (ICRA 2024).
+% Novel asymmetric noise model for NLOS multipath; LM-family iSAM2 adaptation.
+% Uses SS-TWR; achieves ~0.3 m MAE with sparse anchors (relevant to NLOS sections).
+@inproceedings{jiang2024robust,
+  author    = {Jiang, Fan and others},
+  title     = {Robust Indoor Localization with Ranging-{IMU} Fusion},
+  booktitle = {Proceedings of the IEEE International Conference on Robotics
+               and Automation (ICRA)},
+  year      = {2024},
+  note      = {Also available as arXiv:2309.08803.
+               TODO: verify full author list (Fan Jiang + 6 others, Georgia Tech).},
+}
+
+% AoI-FusionNet: Age-aware tightly coupled UWB-IMU fusion (arXiv 2026).
+% Deep-learning framework for sparse/intermittent/stale UWB ranging conditions.
+% Targets avalanche tracking but relevant for any NLOS-sparse scenario.
+@article{aoi_fusionnet_2026,
+  author  = {TODO},
+  title   = {{AoI-FusionNet}: Age-Aware Tightly Coupled Fusion of {UWB}-{IMU}
+             under Sparse Ranging Conditions},
+  journal = {arXiv preprint arXiv:2603.12849},
+  year    = {2026},
+  note    = {Posted March 2026. TODO: verify author names and publication venue.},
+}
+
+% ============================================================================
+% MULTI-TAG / HEADING ESTIMATION
+% ============================================================================
+
+% Dual-anchor model for UAV positioning (MDPI Sensors, Feb 2025).
+% Uses two UWB anchors on UAV + rangefinder + barometer + UKF for 2D positioning.
+% Our work is the transpose: two tags on rover, shared fixed-infrastructure anchors.
+@article{dualanchor_uav_2025,
+  author  = {TODO},
+  title   = {An Improved {UWB} Indoor Positioning Approach for {UAVs} Based on
+             the Dual-Anchor Model},
+  journal = {Sensors},
+  volume  = {25},
+  number  = {4},
+  pages   = {1052},
+  year    = {2025},
+  doi     = {10.3390/s25041052},
+  note    = {PMC ID: PMC11859676. Published Feb 10, 2025.
+             TODO: verify full author list.},
+}
+
+% ============================================================================
+% UWB DATASETS / BENCHMARKS
+% ============================================================================
+
+% UTIL dataset: UWB TDOA for mobile robot localization (IJRR 2024).
+% Quadrotor platform, DWM1000 modules, 150 min data, LOS/NLOS conditions.
+@article{zhao2024util,
+  author  = {Zhao, Wenda and Goudar, Abhishek and Qiao, Xinyuan and Schoellig, Angela P.},
+  title   = {{UTIL}: An Ultra-Wideband Time-Difference-of-Arrival Indoor Localization Dataset},
+  journal = {The International Journal of Robotics Research},
+  volume  = {43},
+  number  = {10},
+  pages   = {1443--1456},
+  year    = {2024},
+  doi     = {10.1177/02783649241230640},
+}
+
+% ============================================================================
+% GROUND TRUTH SYSTEMS
+% ============================================================================
+
+@misc{kinect_v2,
+  author       = {{Microsoft Corporation}},
+  title        = {{Kinect for Windows v2 Sensor}},
+  howpublished = {\url{https://developer.microsoft.com/en-us/windows/kinect/}},
+  year         = {2014},
+  note         = {Accessed 2026-06-30.},
+}
+
+@article{aruco_garrido_2014,
+  author  = {Garrido-Jurado, S. and Mu{\~n}oz-Salinas, R. and
+             Madrid-Cuevas, F. J. and Mar{\'\i}n-Jim{\'e}nez, M. J.},
+  title   = {Automatic Generation and Detection of Highly Reliable Fiducial
+             Markers under Occlusion},
+  journal = {Pattern Recognition},
+  volume  = {47},
+  number  = {6},
+  pages   = {2280--2292},
+  year    = {2014},
+  doi     = {10.1016/j.patcog.2014.01.005},
+}
+
+% ============================================================================
+% COMPETING SYSTEMS / COMMERCIAL BASELINES
+% ============================================================================
+
+% TODO: Decawave TREK1000 / MDEK1001 product datasheet
+% TODO: Pozyx system — https://www.pozyx.io/
+% TODO: DW3000 / Qorvo datasheet (replacement chip for DW1000)
+
+% ============================================================================
+% ROBOTICS / NAVIGATION
+% ============================================================================
+
+% TODO: BNO085 datasheet / CEVA-SH2 product page (Bosch BNO085 9-DOF AHRS).
+% TODO: Rocker-Bogie rover reference if describing the mechanical platform.
+% TODO: Probabilistic Robotics (Thrun, Burgard, Fox 2005) for EKF background.

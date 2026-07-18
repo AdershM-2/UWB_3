@@ -1,0 +1,19 @@
+
+30061950
+issue was with pins I changed the pins and hardcoded them in the uwb config file to 25, 26 for imu and 32, 33 ans ss to 4 for oled so oled is not working but imu is and it is also able to connect to anchoors 
+oled was not working initially but it started working randomly now the complete setup is working but in the older version 
+ss pin is the culprit , the problem I feel is that the arduino code is not able to over ride the pin selection in uwbconfig file 
+confirmed after changing ss pin vlaues in uwb config file 
+
+
+30062015
+ now I replaced the library with current one and made the required changes to the pin number everything is working out fine now but the pin numbers remain hardcoed 
+I also tested two tag it is also working fine 
+checking connection loss isssue now : yes the connection loss between anchor and tag is being highly observed i think I will have to optimize my code 
+at a time anchors are able to connect to only one tag need to make changes to anchor firmware too 
+
+30062300 
+I have debugged the tag anchor connection link lost issue claude has made changes to twr engine and applied a new algorithm as well that helps resolve it moving on to the next issue now 
+
+01060030
+both the tag is resetting again and again basically the system is not viable 

@@ -1,0 +1,117 @@
+% ============================================================================
+% State Estimation
+% ============================================================================
+
+\subsection{EKF Architecture and State}
+
+All estimation runs on the host laptop; the rover MCU streams only raw ranges
+(\textit{dumb-tag / smart-host} split).
+Each tag has an independent FusionEKF.
+The 6-dimensional state per tag is:
+\begin{equation}
+  \mathbf{x} = \begin{bmatrix} p_x & p_y & v_x & v_y & b_x & b_y \end{bmatrix}^\top,
+  \label{eq:state_vec}
+\end{equation}
+where $(p_x,p_y)$ is position, $(v_x,v_y)$ velocity, and $(b_x,b_y)$
+accelerometer bias in the world frame.
+$Z$-position is solved independently from 3D multilateration and fed as a
+scalar sidecar observation.
+
+\textbf{IMU-driven prediction.}
+Linear acceleration from the BNO085 is rotated to world frame:
+$\mathbf{a}_\mathcal{W} = \mathbf{R}(\mathbf{q})\mathbf{a}_\mathcal{B}$.
+The discrete prediction over $\Delta t$ is:
+\begin{align}
+  p_\alpha' &= p_\alpha + v_\alpha\Delta t
+    + \tfrac{1}{2}(a_\alpha - b_\alpha)\Delta t^2, \\
+  v_\alpha' &= v_\alpha + (a_\alpha - b_\alpha)\Delta t,
+  \quad b_\alpha' = b_\alpha,
+\end{align}
+for $\alpha \in \{x,y\}$.
+Without IMU the predictor degenerates to constant-velocity
+with inflated process noise ($\gamma^2 = 16$).
+Singer model process noise:
+\begin{equation}
+  \mathbf{Q} = \begin{bmatrix}
+    \frac{\sigma_a^2 \Delta t^3}{3}\mathbf{I}_2 &
+    \frac{\sigma_a^2 \Delta t^2}{2}\mathbf{I}_2 & \mathbf{0} \\[4pt]
+    \frac{\sigma_a^2 \Delta t^2}{2}\mathbf{I}_2 &
+    \sigma_a^2\Delta t\,\mathbf{I}_2 & \mathbf{0} \\[4pt]
+    \mathbf{0} & \mathbf{0} & \sigma_b^2\Delta t\,\mathbf{I}_2
+  \end{bmatrix},
+  \label{eq:Qmatrix}
+\end{equation}
+with $\sigma_a = \SI{0.15}{\metre\per\second\squared}$ and
+$\sigma_b = 10^{-3}\,\si{\metre\per\second\cubed}$.
+
+\subsection{Adaptive Measurement Update}
+
+The weighted LM fix $\hat{\mathbf{p}}_\text{ML}$ is treated as a direct
+position observation: $\mathbf{H} = [\mathbf{I}_2\;\mathbf{0}_{2\times4}]$.
+Measurement covariance is adaptively inflated:
+\begin{equation}
+  \mathbf{R}_\text{eff} = \mathbf{R}_\text{base}\cdot
+    \mathrm{clip}(\alpha_\text{rms}\cdot\alpha_\text{NLOS}\cdot\alpha_\text{DOP},\;1,\;50),
+  \label{eq:Reff}
+\end{equation}
+where $\mathbf{R}_\text{base} = \hat{\sigma}^2(\mathbf{J}^\top\mathbf{W}\mathbf{J})^{-1}$
+from the LM solver, and:
+\begin{align*}
+  \alpha_\text{rms}  &= 1 + (\text{rms}/0.05)^2, \\
+  \alpha_\text{NLOS} &= 1 + \mathrm{mean}_i\max(0,\,\text{gap}_i/6), \\
+  \alpha_\text{DOP}  &= 1 + \max(0,\,(\mathrm{DOP}-0.10)/0.10).
+\end{align*}
+All three ranging-quality signals propagate into the EKF covariance,
+so high-NLOS or high-residual fixes are trusted less.
+
+\subsection{Robustness: Gating and ZUPT}
+
+\textbf{NIS gate and divergence guard.}
+Measurement updates are gated by the Normalised Innovation Squared:
+\begin{equation}
+  \mathrm{NIS} = \boldsymbol{\nu}^\top\mathbf{S}^{-1}\boldsymbol{\nu}
+    \leq \chi^2_{2,0.95} = 5.991,
+  \label{eq:nis}
+\end{equation}
+where $\boldsymbol{\nu} = \hat{\mathbf{p}}_\text{ML} - \mathbf{H}\mathbf{x}$
+and $\mathbf{S} = \mathbf{H}\mathbf{P}\mathbf{H}^\top + \mathbf{R}_\text{eff}$.
+After five consecutive rejections the filter reinitialises to
+$\hat{\mathbf{p}}_\text{ML}$ with zero velocity.
+An additional macro-divergence guard resets the filter if
+$\|\hat{\mathbf{p}}_\text{EKF} - \hat{\mathbf{p}}_\text{ML}\| > \SI{2}{\metre}$
+or $\mathrm{tr}(\mathbf{P}) > 25$.
+
+\textbf{ZUPT.}
+A sliding window of eight IMU samples triggers a zero-velocity
+pseudo-measurement when the rover is stationary:
+mean $|\mathbf{a}_{xy}| < \SI{0.10}{\metre\per\second\squared}$,
+variance $< 0.005$\,(\si{\metre\per\second\squared})$^2$,
+$|\omega_z| < \SI{0.087}{\radian\per\second}$, and
+$|\mathbf{v}| < \SI{0.05}{\metre\per\second}$.
+ZUPT drives velocity toward zero and corrects residual accelerometer offset
+during stationary holds via the bias states.
+
+\subsection{Full 6-DOF Output}
+
+\textbf{Roll and pitch} are extracted from the BNO085 quaternion
+$\mathbf{q} = [q_w, q_x, q_y, q_z]$:
+\begin{align}
+  \phi  &= \mathrm{atan2}(2(q_w q_x + q_y q_z),\; 1 - 2(q_x^2+q_y^2)), \\
+  \theta &= \mathrm{asin}(\mathrm{clip}(2(q_w q_y - q_z q_x),\;{-1},{+1})),
+\end{align}
+at $\approx\SI{100}{\hertz}$ via the BNO085 Hillcrest fusion --- no
+re-estimation is needed in the EKF.
+
+\textbf{Yaw} is assembled from UWB dual-tag estimate
+$\psi_\text{UWB}$ (Eq.~\ref{eq:dual_tag_yaw}) and BNO085 magnetometer-aided
+yaw $\psi_\text{IMU}$.
+$\psi_\text{IMU}$ corrects drift during straight-line motion;
+$\psi_\text{UWB}$ anchors the estimate during turns.
+\todo{Implement complementary filter or EKF fusing both yaw signals.}
+
+The final position output is EMA-filtered:
+$\hat{\mathbf{p}}_\text{out} = \alpha\hat{\mathbf{p}}_\text{EKF}
++ (1-\alpha)\hat{\mathbf{p}}_\text{out,prev}$
+with $\alpha \in [0.15,\,0.50]$ (stationary to rover-motion preset).
+Full 6-DOF pose $(\hat{p}_x, \hat{p}_y, \hat{p}_z, \hat{\phi}, \hat{\theta}, \hat{\psi})$
+is streamed to the GUI and logged to CSV at every sweep.

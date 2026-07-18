@@ -1,0 +1,36 @@
+% ============================================================================
+% Related Work
+% ============================================================================
+
+UWB time-of-flight ranging achieves centimetre-level accuracy by exploiting
+$\geq\SI{500}{\mega\hertz}$ bandwidth to separate the direct path from
+multipath \cite{alarifi2016uwb}.
+Open-source DW1000 libraries \cite{thotro_dw1000} are the starting point for
+most academic deployments but share the structural limitations in
+Table~\ref{tab:library_comparison}.
+A recent benchmark \todoref{MDPI Sensors 2025} reports 13.1\,cm static and
+29.9\,cm dynamic error with an unmodified library --- still far from the
+sub-5\,cm target motivating our calibration work.
+Anchor self-calibration has been studied via SLAM-style trajectory optimisation
+\cite{tiemann2017atlas}, classical MDS \cite{torgerson1952mds}, and
+Gaussian-Process regression over large outdoor sites \cite{yuan2025uwbgp};
+ours requires only a tape measure at a single known distance and no external
+odometry.
+A UWB dataset for mobile robot localisation \cite{zhao2024util} underscores
+ongoing interest in infrastructure-based UWB positioning.
+
+NLOS identification using the DW1000's first-path-power registers is
+documented in the APS006 application note \cite{aps006} and exploited by
+Kolakowski and Modelski \cite{kolakowski2017nlos} for LOS/NLOS classification.
+Machine-learning classifiers over CIR features achieve higher detection rates
+\todoref{cite FCN-Attention 2023} but require training data and compute
+unavailable on a microcontroller.
+Fusing UWB positions with IMU via a loose-coupled EKF is standard practice;
+tight coupling directly on raw ranges improves sparse-anchor coverage
+\cite{jiang2024robust}, while age-of-information mechanisms handle intermittent
+ranging \cite{aoi_fusionnet_2026}.
+Multi-tag heading estimation from world-frame position differences is used in
+vehicle positioning \todoref{cite vehicle-heading UWB} and UAV attitude
+\cite{dualanchor_uav_2025}; our dual-tag formulation applies this to ground
+robot 6-DOF pose and, to our knowledge, has not been published in the
+open literature.

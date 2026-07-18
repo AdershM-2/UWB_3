@@ -1,0 +1,147 @@
+% ============================================================================
+% UWB RTLS — IEEE ICRA / RA-L Manuscript
+%
+% Living draft. Many sections contain placeholders (TODO) intentionally.
+% Do NOT fabricate results or citations. Leave TODOs explicit.
+%
+% Build:  pdflatex main && bibtex main && pdflatex main && pdflatex main
+% ============================================================================
+
+\documentclass[letterpaper, 10pt, conference]{IEEEtran}
+
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{amsmath,amssymb,bm}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{url}
+\usepackage{xcolor}
+\usepackage{subcaption}
+\usepackage[hidelinks]{hyperref}
+\usepackage{cleveref}
+\usepackage{siunitx}
+
+% IEEEtran citation style
+\usepackage{cite}
+
+% TODO highlighting — remove before submission
+\newcommand{\todo}[1]{\textcolor{darkgray}{\textbf{[TODO: #1]}}}
+\newcommand{\todoref}[1]{}  % suppress [CITE:] markers in draft
+\newcommand{\placeholder}[1]{}
+
+% Notation macros
+\newcommand{\pos}{\mathbf{p}}          % tag position
+\newcommand{\anch}{\mathbf{a}}         % anchor position
+\newcommand{\state}{\mathbf{x}}        % state vector
+\newcommand{\R}{\mathbf{R}}            % rotation matrix
+\newcommand{\TOF}{\tau}                % time-of-flight
+
+% ============================================================================
+\begin{document}
+
+\title{DUNE: A Low-Cost Dual-Tag UWB System for Full 6-DOF Robot Pose Estimation
+  in Unstructured Terrain}
+
+\author{%
+  \IEEEauthorblockN{Adersh M}
+  \IEEEauthorblockA{Indian Institute of Technology Kanpur\\
+                    Kanpur, India\\
+                    adm20@iitk.ac.in}
+  \and
+  \IEEEauthorblockN{Atharva Chavan}
+  \IEEEauthorblockA{Indian Institute of Technology Indore\\
+                    Indore, India\\
+                    me240003021@iiti.ac.in}
+  \and
+  \IEEEauthorblockN{Ashish Dutta}
+  \IEEEauthorblockA{Indian Institute of Technology Kanpur\\
+                    Kanpur, India\\
+                    adutta@iitk.ac.in}
+}
+
+\maketitle
+
+% ============================================================================
+\begin{abstract}
+\input{sections/abstract}
+\end{abstract}
+
+\begin{IEEEkeywords}
+Ultra-wideband, indoor localization, RTLS, NLOS mitigation, sensor fusion,
+anchor self-survey \todo{add 1-2 more keywords}
+\end{IEEEkeywords}
+
+% ============================================================================
+\section{Introduction}
+\label{sec:intro}
+\input{sections/introduction}
+
+% ============================================================================
+\section{Related Work}
+\label{sec:related}
+\input{sections/related_work}
+
+% ============================================================================
+\section{Problem Formulation}
+\label{sec:problem}
+\input{sections/problem_formulation}
+
+% ============================================================================
+\section{System Architecture}
+\label{sec:architecture}
+\input{sections/architecture}
+
+% ============================================================================
+\section{UWB Ranging Protocol}
+\label{sec:protocol}
+\input{sections/protocol}
+
+% ============================================================================
+\section{NLOS Detection and Weighted Multilateration}
+\label{sec:nlos}
+\input{sections/nlos}
+
+% ============================================================================
+\section{Calibration}
+\label{sec:calibration}
+\input{sections/calibration}
+
+% ============================================================================
+\section{State Estimation}
+\label{sec:estimation}
+\input{sections/state_estimation}
+
+% ============================================================================
+\section{Experimental Setup}
+\label{sec:setup}
+\input{sections/experimental_setup}
+
+% ============================================================================
+\section{Results}
+\label{sec:results}
+\input{sections/results}
+
+% ============================================================================
+\section{Discussion}
+\label{sec:discussion}
+\input{sections/discussion}
+
+% ============================================================================
+\section{Conclusion}
+\label{sec:conclusion}
+\input{sections/conclusion}
+
+% ============================================================================
+\bibliographystyle{IEEEtran}
+\bibliography{bibliography/refs}
+
+% ============================================================================
+\appendix
+\section{DS-TWR Estimator Derivation}
+\input{sections/appendix_dstwr}
+
+\section{Multilateration — Levenberg-Marquardt}
+\input{sections/appendix_lm}
+
+\end{document}

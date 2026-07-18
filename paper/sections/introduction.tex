@@ -1,0 +1,109 @@
+% ============================================================================
+% Introduction
+% ============================================================================
+
+\subsection{Motivation}
+
+Autonomous navigation of mobile ground robots in unstructured, GPS-denied
+environments---sandy terrain, planetary analogues, agricultural fields,
+construction sites, and industrial inspection areas---demands a reliable
+global position and orientation source that operates without visual
+features or expensive infrastructure.
+LiDAR scan-matching and visual odometry both depend on scene distinctiveness
+that is absent on featureless sand or uniform warehouse floors.
+Motion-capture systems (OptiTrack, Vicon) deliver millimetre accuracy but
+cost tens of thousands of dollars, require fixed calibrated rigs, and
+are impractical outdoors or in the field.
+
+Ultra-wideband (UWB) radio, based on IEEE\,802.15.4 time-of-flight ranging,
+offers a compelling alternative: centimetre-scale accuracy, operation in
+darkness and dust, and material penetration for partial-NLOS coverage.
+We apply UWB to the full 6-DOF pose estimation of a 13-DOF rocker--bogie
+mobile manipulator operating on a sandy indoor testbed with no visual texture,
+demonstrating that a microcontroller-native UWB system can meet the accuracy
+and update rate required for closed-loop autonomous navigation in challenging
+terrain.
+
+\subsection{Limitations of Existing Open-Source DW1000 Libraries}
+\label{sec:limitations}
+
+The Decawave DW1000 chip \cite{dw1000_datasheet} is the most widely deployed
+UWB ranging chip with open-source microcontroller support.
+The canonical Arduino library \texttt{thotro/arduino-dw1000} \cite{thotro_dw1000}
+is the basis for virtually all existing implementations, and
+Table~\ref{tab:library_comparison} shows that all five publicly available
+libraries share the following structural limitations:
+
+\textbf{(L1) Four-anchor frame-buffer ceiling.}
+The RANGE frame encodes each device's timestamps as three absolute 40-bit
+values (17\,bytes/device).
+With a 90-byte DW1000 frame buffer, only $\lfloor(90-9-2)/17\rfloor = 4$
+devices fit; a fifth anchor causes silent data corruption \cite{thotro_dw1000}.
+
+\textbf{(L2) Broadcast-induced RF collisions.}
+All existing libraries use a broadcast POLL that every anchor hears
+and attempts to reply to simultaneously, causing persistent RF collisions
+and degrading reliability.
+
+\textbf{(L3) No NLOS detection or mitigation.}
+When an obstacle blocks the direct UWB path (non-line-of-sight, NLOS),
+the measured range is biased positively by the excess detour path length,
+systematically corrupting the multilateration solution.
+Despite first-path power registers being available on every received frame,
+no existing library uses them.
+Without NLOS mitigation, a single obstructed anchor can shift the position
+estimate by tens of centimetres.
+
+\textbf{(L4) Single-tag only --- no orientation estimate.}
+Every existing open-source implementation tracks a single tag.
+No library provides heading, roll, or pitch in any form.
+Orientation is essential for mobile manipulation and terrain-aware navigation;
+without it, only planar point tracking is possible.
+
+\textbf{(L5) No filtering --- accuracy limited to 10--30\,cm.}
+No existing open-source library applies any spatial filtering, sensor fusion,
+or calibration workflow.
+Raw UWB ranges contain per-board antenna-delay biases of 2--7\,cm
+(uncalibrated boards read 30--50\,cm too long), and without an EKF or
+equivalent, position noise is never reduced.
+No library has demonstrated better than 10\,cm 2D accuracy in a published,
+reproducible experiment.
+
+\subsection{Contributions}
+\label{sec:contributions}
+
+We present \textbf{DUNE} (Dual-tag UWB Navigation Engine), addressing all five
+limitations above through three contributions:
+
+\begin{enumerate}
+
+  \item \textbf{Full 6-DOF pose from UWB alone.}
+    Two tags at a \SI{50}{\centi\metre} baseline on the rover directly recover
+    yaw from their world-frame position difference; one elevated anchor makes $z$
+    observable via 3D trilateration; a BNO085 IMU adds roll and pitch.
+    The result is a complete $(x,y,z,\phi,\theta,\psi)$ pose at \SI{\approx10}{\hertz}
+    --- the first open UWB system to deliver full 6-DOF without motion capture.
+
+  \item \textbf{Two-tier in-situ calibration.}
+    Tier~1 runs a firmware binary search to converge per-board antenna delay to
+    \SI{<0.3}{\milli\metre} resolution using only a tape measure at one known
+    distance, eliminating the 30--50\,cm bulk bias on uncalibrated boards.
+    Tier~2 applies a 9-point spatial error map for residual multipath.
+    We identify and remove a double-correction bug present in all prior
+    software-bias schemes that silently inverted the bias correction direction.
+
+  \item \textbf{Same-frame NLOS detection and robust multilateration.}
+    Prior libraries compute the first-path/receive-power gap across two
+    \emph{different} radio links --- physically invalid.
+    We read both registers from the same frame, producing a valid per-anchor
+    NLOS score that drives continuous weighting in a Levenberg--Marquardt solver
+    and an independent MAD gate, together providing two complementary defences
+    against obstructed anchors.
+
+\end{enumerate}
+
+Section structure: \S\ref{sec:related} reviews related work.
+\S\ref{sec:problem} formalises the estimation problem.
+\S\ref{sec:architecture}--\S\ref{sec:estimation} describe the system.
+\S\ref{sec:setup}--\S\ref{sec:results} present experiments.
+\S\ref{sec:discussion}--\S\ref{sec:conclusion} conclude.

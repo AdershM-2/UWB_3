@@ -1,0 +1,9 @@
+# Normalise line endings in the repo (LF), check out native on each platform.
+* text=auto
+
+# Treat these as binary (no EOL munging, no textual diff noise).
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.pdf  binary
+*.mat  binary

@@ -1,0 +1,49 @@
+% ============================================================================
+% Conclusion
+% ============================================================================
+
+We presented \textbf{DUNE} (Dual-tag UWB Navigation Engine), an ultra-wideband
+localization system delivering full 6-DOF pose estimation for a 13-DOF
+rocker--bogie mobile manipulator operating in unstructured terrain.
+DUNE addresses the fundamental limitations of all prior open-source Decawave
+DW1000 implementations through three focused contributions.
+
+\textbf{Dual-tag 6-DOF pose estimation.}
+Two UWB tags at a \SI{50}{\centi\metre} baseline on the rover chassis provide
+geometric yaw from their world-frame position difference.
+Combined with five-anchor 3D ranging (one elevated anchor making $z$
+observable) and BNO085 IMU fusion for roll and pitch, the system outputs
+complete $(x, y, z, \phi, \theta, \psi)$ at \SI{\approx10}{\hertz}---the
+first UWB implementation to provide full 6-DOF pose without motion capture.
+
+\textbf{Two-tier in-situ calibration.}
+Tier~1 antenna-delay binary search eliminates the 30--50\,cm bulk bias
+present on uncalibrated boards, requiring only a tape measure and taking
+under two minutes per board.
+Tier~2 spatial error mapping corrects residual position-dependent multipath.
+We document and remove a double-correction failure in naive prior approaches
+in which the same bias $b_0$ was both pushed to NVS and subtracted in
+software simultaneously, producing a net over-correction of $2b_0$ that
+inverted the bias direction entirely.
+
+\textbf{Same-frame NLOS detection and weighted multilateration.}
+Reading first-path and receive power from the same RANGE\_REPORT frame on
+the tag side yields a physically valid per-anchor NLOS gap signal, correcting
+an error in all existing libraries where the gap was computed across two
+different radio links.
+Continuous weighting in the Levenberg--Marquardt solver, combined with an
+independent MAD gate for gross outliers, delivers robust positioning under
+partial obstructions.
+
+\todo{Insert quantitative summary once hardware experiments complete:
+DUNE achieves X cm 2D RMSE and Y deg heading RMSE at Z Hz on dynamic
+rover trajectories over sandy terrain, compared to W cm for an
+uncalibrated single-tag baseline.}
+
+\textbf{Future work.}
+Immediate next steps include extending the EKF from 2D to a 9-state
+3D formulation once the five-anchor geometry is field-validated,
+tighter IMU--UWB coupling directly on raw ranges, and coordinated
+TDMA slot assignment for deterministic multi-tag operation.
+Longer-term, migration to the Qorvo DW3000 (pin-compatible, production-current)
+will extend the system lifetime beyond the DW1000 end-of-life.

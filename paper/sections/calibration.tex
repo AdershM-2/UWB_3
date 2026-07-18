@@ -1,0 +1,131 @@
+% ============================================================================
+% Calibration
+% ============================================================================
+
+Accurate ranging requires removing two classes of bias:
+a bulk per-board constant offset (antenna delay) and a
+position-dependent residual (multipath geometry).
+We address these in two independent tiers, and document a third calibration
+failure mode that motivated this design.
+
+\subsection{Tier 1: Hardware Antenna Delay Calibration}
+
+Each DW1000 has an internal timestamp latency between first-path arrival and
+the hardware capture event.
+This latency, stored as a 16-bit register in DW1000 ticks
+($1\,\text{tick} \approx \SI{15.65}{\pico\second} \approx \SI{4.69}{\milli\metre}$),
+is board-specific.
+The factory default of 16384 ticks leaves uncalibrated boards reading
+approximately 30--50\,cm too long.
+
+\textbf{Calibration procedure.}
+The host sends a \texttt{HWCALIB,<id>,<true\_dist\_mm>} UDP command.
+The tag executes a binary search: in each of $I = 14$ iterations it pushes
+a candidate delay $d_c$ to the target anchor via a \texttt{MSG\_ANT\_DELAY}
+UWB relay, collects $S = 50$ range samples, and bisects based on whether the
+mean range exceeds the known true distance.
+After $I$ iterations the resolution is $< 0.07\,\text{ticks} \approx 0.3$\,mm.
+The final delay is pushed to the anchor's NVS via \texttt{Preferences}, so
+it survives reflashing.
+
+\textbf{Calibrated values.}
+Table~\ref{tab:ant_delays} lists the calibrated antenna delays for all nodes,
+obtained at a reference distance of \SI{3.0}{\metre}.
+
+\begin{table}[h]
+  \centering
+  \caption{Calibrated antenna delays (DW1000 ticks $\approx$ \SI{4.69}{\milli\metre}/tick).
+  Reference distance: \SI{3.0}{\metre}. PRF: 64\,MHz, 110\,kbps.}
+  \label{tab:ant_delays}
+  \begin{tabular}{lccc}
+    \toprule
+    Node & Address & Delay (ticks) & $\Delta$ from factory (ticks) \\
+    \midrule
+    Anchor 1 & \texttt{0x01} & 16422 & $+38$ ($\approx\SI{178}{\milli\metre}$) \\
+    Anchor 2 & \texttt{0x02} & 16407 & $+23$ ($\approx\SI{108}{\milli\metre}$) \\
+    Anchor 3 & \texttt{0x03} & 16394 & $+10$ ($\approx\SI{47}{\milli\metre}$)  \\
+    Anchor 4 & \texttt{0x04} & 16522 & $+138$ ($\approx\SI{647}{\milli\metre}$) \\
+    Anchor 5 & \texttt{0x05} & 16410 & $+26$ ($\approx\SI{122}{\milli\metre}$) \\
+    Tag 1    & \texttt{0xF0} & 16360 & $-24$ ($\approx\SI{-113}{\milli\metre}$) \\
+    Tag 2    & \texttt{0xF1} & 16473 & $+89$ ($\approx\SI{418}{\milli\metre}$) \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+The calibrated delays span 128\,ticks across anchors ($+10$ to $+138$ above
+factory default 16384), confirming that per-board calibration is essential;
+a shared default would introduce systematic ranging errors of up to
+\SI{647}{\milli\metre} (\SI{64.7}{\centi\metre}) on Anchor~4.
+
+\subsection{Tier 2: Spatial Error Map}
+\label{sec:tier2}
+
+After Tier-1 calibration, residual ranging errors remain due to
+position-dependent multipath: the channel impulse response varies with
+tag location because different wall-reflection paths are constructive or
+destructive at different points in the room.
+Offline analysis of calibration logs (see \S\ref{sec:failure_mode}) showed
+this residual is non-monotonic in range and cannot be modelled by a
+per-anchor polynomial correction.
+A \emph{spatial map}---a correction $c_i(\mathbf{p})$ per anchor as a
+function of tag position---matches the physics.
+
+\textbf{Grid capture.}
+The tag is placed at each of $G$ grid points (default: $G = 9$, a
+$3 \times 3$ grid at $\pm\SI{1.5}{\metre}$ around the anchor centroid).
+At each point $\mathbf{g}_k$, $S_k$ raw distance samples are collected for
+each visible anchor~$i$; samples with gap $> \SI{6}{\decibel}$ are
+rejected (NLOS capture gate).
+The residual at grid point~$k$ for anchor~$i$ is
+\begin{equation}
+  r_{i,k} = \bar{\rho}_{i,k} - \|\mathbf{g}_k - \mathbf{a}_i\|_2,
+  \label{eq:errormap_residual}
+\end{equation}
+where $\bar{\rho}_{i,k}$ is the mean over accepted samples.
+
+\textbf{Runtime correction.}
+Given the rover's previous-sweep EKF position $\hat{\mathbf{p}}_{t-1}$
+(one-step lag of $\sim\SI{100}{\milli\second}$, negligible at rover speed),
+the correction for anchor~$i$ is the inverse-distance-weighted (IDW) mean
+over the four nearest grid points:
+\begin{equation}
+  c_i(\hat{\mathbf{p}}_{t-1}) =
+  \frac{\displaystyle\sum_{k \in \mathcal{N}(4)} w_k\,r_{i,k}}
+       {\displaystyle\sum_{k \in \mathcal{N}(4)} w_k},
+  \quad w_k = \frac{1}{d_k^2 + \varepsilon^2},
+  \label{eq:idw}
+\end{equation}
+$d_k = \|\hat{\mathbf{p}}_{t-1} - \mathbf{g}_k\|$, $\varepsilon = \SI{0.05}{\metre}$.
+The correction is linearly faded to zero beyond $1.5 \times s_{\text{grid}}$
+from the nearest grid point and clamped to $\pm\SI{0.30}{\metre}$.
+The corrected range is $\rho_i^{\text{corr}} = \rho_i - c_i$.
+
+\subsection{Documented Calibration Failure Mode}
+\label{sec:failure_mode}
+
+A prior version of the system (version~v2/v3 calibration JSON) applied a
+Level-2 software bias \emph{simultaneously} with the Level-1 hardware delay
+push.
+Concretely: the auto-calibration routine computed a per-anchor bias $b_0$
+from reference-position ranging, then (a)~derived $\Delta = b_0/4.69$
+DW1000 ticks and pushed this to the anchor NVS, and (b)~subtracted $b_0$
+from every subsequent range measurement in the host pipeline.
+After the hardware push removed $b_0$ from the physics, the software
+subtracted $b_0$ again, producing an over-correction of $2 b_0$.
+With uncalibrated boards showing $b_0 \in [+445, +708]$\,mm, the
+double-correction inverted the bias---the system behaved worse than no
+calibration at all.
+
+A second bug was also present: the delay push used the sign convention
+\texttt{new\_delay = current\_delay $-\Delta$}, whereas the correct sign is
+\texttt{+$\Delta$} (more antenna delay shortens the reported distance;
+removing a positive bias requires adding delay).
+Rather than patching these bugs, we removed the Level-2 software-bias path
+entirely and replaced it with the position-dependent Tier-2 spatial map,
+which has no coupling to the Tier-1 hardware correction.
+This is described in full in a supplementary technical report
+\todoref{cite our calibration redesign document (docs/calibration\_redesign\_2tier.md)
+as supplementary material or arXiv technical note before submission}.
+The v4 \texttt{calibration.json} schema retains only Tier-1 traceability;
+old v2/v3 files load without error but their Level-2 fields are discarded
+with a warning.

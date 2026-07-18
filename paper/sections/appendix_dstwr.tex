@@ -1,0 +1,24 @@
+% ============================================================================
+% Appendix A — DS-TWR Estimator Derivation
+% ============================================================================
+
+Let $T_{PS}$, $T_{PR}$, $T_{RS}$ denote the tag's POLL send, POLL\_ACK receive,
+and RANGE send timestamps (in DW1000 ticks, corrected by antenna delay).
+Let $T_{PR_A}$, $T_{AS}$, $T_{AR}$ denote the anchor's POLL receive,
+POLL\_ACK send, and RANGE receive timestamps.
+Define the four intervals:
+\begin{align*}
+  R_1 &= T_{PR}   - T_{PS},   \quad &P_1 = T_{AS} - T_{PR_A}, \\
+  R_2 &= T_{AR}   - T_{AS},   \quad &P_2 = T_{RS} - T_{PR}.
+\end{align*}
+
+Let $\delta_t$ and $\delta_a$ be the clock-frequency offsets of tag and anchor
+relative to the ideal frequency.
+The round-trip intervals satisfy
+$R_1 = (1+\delta_t)[\tau + \tau + P_1/(1+\delta_a)]$ (to first order).
+\todo{Write out the full first-order clock error cancellation.
+Show that Eq.~\eqref{eq:dstwr} produces ToF accurate to $O(\delta^2 \tau)$.
+Cite Neirynck 2016 or Decawave APS013 for the derivation.}
+
+The reported distance is $d = c \cdot \hat{\TOF}$,
+where $c = 299{,}792{,}458$\,m/s.

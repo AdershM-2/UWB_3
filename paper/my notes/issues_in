@@ -1,0 +1,23 @@
+30062027
+#hardware issue 
+the tag2 has connection issues 
+#software issue 
+1. pins not able to override ubconfig : 
+resolved 
+    TwrEngine.h:31-40 — begin() now has three trailing default parameters: pinSs = UWB_PIN_SS, pinIrq = UWB_PIN_IRQ, pinRst = UWB_PIN_RST
+    TwrEngine.cpp:12-19 — begin() body receives those parameters and passes them to DW1000.begin() / DW1000.select() instead of the hardcoded macros
+
+2. connection loss between anchor and tag anchor not showing 4 always
+resolved 
+    5 disconnections for >1s in 1 minute 
+
+    TwrEngine.h/.cpp — serviceResponder() now returns bool:
+
+    true only when a complete POLL→POLL_ACK→RANGE→RANGE_REPORT exchange just finished
+    false for all other cases (idle, POLL half, survey, unknown frames)
+    POLL_ACK timeout nudged from 35ms → 45ms as extra margin
+    UwbScheduler.h — SKIP_BASE_SWEEPS 5 → 2: if failures do happen, the dead window is ~600ms not ~2s
+    anchor loop files — OLED now fires on the served flag, not a wall clock. The key property: when served=true, the tag has just moved on to range the next anchor in its list. With 3 other anchors × ~15ms each, this anchor has ≥45ms before the next POLL arrives — the 23ms OLED refresh fits cleanly in that gap. The 2000ms fallback keeps the display updating when no tag is present.
+
+3. able to connect to only one tag at a time  
+4. Gui based antenna calibration fails 

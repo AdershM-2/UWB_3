@@ -1,0 +1,316 @@
+/*
+ * Tag.ino - UWB RTLS tag (initiator).
+ *
+ * The tag ranges to every anchor in ANCHORS[] each sweep and streams the raw
+ * distances to the MATLAB host. It NEVER solves position itself, so adding
+ * anchors only means editing ANCHORS[] here and the matching AnchorConfig in
+ * MATLAB - no algorithm change, and no firmware change once anchors are added.
+ *
+ * Transport: pick ONE of the two #defines below.
+ *   UWB_HOSTLINK_SERIAL : stream over USB serial (simplest; tethered)
+ *   UWB_HOSTLINK_UDP    : stream over WiFi UDP to the MATLAB PC
+ */
+
+// ---- choose ONE transport (compile-time) ----
+// #define UWB_HOSTLINK_SERIAL
+#define UWB_HOSTLINK_UDP
+#define UWB_USE_OLED
+
+#include <UwbRtls.h>
+
+// >>>>>>>>>>>>>>>>> PER-BOARD CONFIGURATION <<<<<<<<<<<<<<<<<<
+// Each tag board must have a unique TAG_ID within 0xF0–0xFE.
+//   Board 1 (first tag):  TAG_ID = UWB_ADDR_TAG_BASE       (0xF0)
+//   Board 2 (second tag): TAG_ID = UWB_ADDR_TAG_BASE + 1   (0xF1)
+// ANTENNA_DELAY must be re-calibrated per board after any radio change.
+//   Tag 1 (0xF0): 16360   Tag 2 (0xF1): 16473
+static const uint8_t  TAG_ID        = 0xF1;  // change per board
+static const uint16_t ANTENNA_DELAY = 16473;  // Tag 2 calibrated (3.0 m ref, 2026-06-18)
+
+// Anchor short addresses. ADD ANCHORS HERE (mirror in MATLAB AnchorConfig).
+static const uint8_t ANCHORS[]  = { 0x01, 0x02, 0x03, 0x04, 0x05 };
+static const uint8_t N_ANCHORS  = sizeof(ANCHORS) / sizeof(ANCHORS[0]);
+
+// Multi-tag token ring: the ordered list of ALL tag addresses sharing the
+// channel. MUST be identical on every tag board (default from UwbConfig.h).
+// List only the tags you deploy; add 0xF2/0xF3 here (on EVERY tag) to grow.
+static const uint8_t TAG_RING[] = UWB_TAG_RING_INIT;
+static const uint8_t RING_SIZE  = sizeof(TAG_RING) / sizeof(TAG_RING[0]);
+
+#if defined(UWB_HOSTLINK_UDP)
+static const char*    WIFI_SSID  = "iitk";
+static const char*    WIFI_PASS  = "";              // open network
+static IPAddress      HOST_IP(255, 255, 255, 255);    // Python/MATLAB PC — update per machine
+static const uint16_t HOST_PORT  = 4100;
+#endif
+// <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+
+// Number of ranging samples averaged per anchor pair during self-survey.
+// 100 samples ≈ 4 s per pair; 6 pairs (4 anchors) ≈ 24 s total.
+static const uint16_t SURVEY_SAMPLES = 100;
+
+// Hardware antenna-delay calibration (GUI-triggered binary search per anchor).
+static const uint8_t  CALIB_ITERS    = 14;    // iterations to converge (~0.07 tick resolution)
+static const uint16_t CALIB_SAMPLES  = 50;    // samples per iteration (~250 ms ranging)
+static const uint16_t CALIB_DELAY_LO = 15800; // binary-search lower bound (ticks)
+static const uint16_t CALIB_DELAY_HI = 16900; // binary-search upper bound (ticks)
+
+TwrEngine    engine;
+UwbScheduler scheduler;
+TagRing      ring;    // multi-tag coordination (one tag transmits at a time)
+HostLink     host;
+OledStatus   oled;
+SensorImu    imu;     // stub today; populates the IMU,... packet tail later
+
+static void splashIdent() {
+  char title[10], l1[20], l2[20];
+  snprintf(title, sizeof(title), "TAG  %02X", TAG_ID);
+  snprintf(l1,    sizeof(l1),    "Delay: %u", ANTENNA_DELAY);
+  snprintf(l2,    sizeof(l2),    "%u anchors", N_ANCHORS);
+  oled.showSplash(title, l1, l2, "Starting...");
+}
+
+static char g_bootMsg[40];   // reset forensics line, sent once the host link is up
+
+void setup() {
+  Serial.begin(115200);
+  delay(300);
+  ResetDiag::report(g_bootMsg, sizeof(g_bootMsg));
+
+  // Init OLED before WiFi — WiFi startup corrupts I2C if OLED init runs after.
+  oled.begin();
+  { char t[10]; snprintf(t, sizeof(t), "TAG  %02X", TAG_ID); oled.showSplash(t, "Starting...", "WiFi..."); }
+
+  ChargeMode::begin();
+  ChargeMode::checkAndSleep(&oled);   // short GPIO13-14 -> charge mode (deep sleep)
+
+#if defined(UWB_HOSTLINK_UDP)
+  host.begin(WIFI_SSID, WIFI_PASS, HOST_IP, HOST_PORT);
+  // Re-init I2C after WiFi — WiFi RF can glitch the bus during association.
+  Wire.end();
+  delay(50);
+  oled.begin();
+#endif
+  host.sendRaw(g_bootMsg);   // why did we last reset? (PANIC/WDT/BROWNOUT/...)
+  splashIdent();
+
+  engine.begin(TWR_TAG, TAG_ID, ANTENNA_DELAY);
+  scheduler.begin(&engine, ANCHORS, N_ANCHORS);
+  ring.begin(&engine, TAG_ID, TAG_RING, RING_SIZE);
+  imu.begin();
+  engine.printDeviceId();
+  Serial.printf("Tag 0x%02X ready, %u anchors, ring of %u\n",
+                TAG_ID, N_ANCHORS, RING_SIZE);
+}
+
+// ---------------------------------------------------------------------------
+// Anchor self-survey: ask every anchor pair (A,B) to range to each other.
+// Outputs SURVEY_BEGIN / SURVEY,v1,... / SURVEY_DONE lines on HostLink.
+// Triggered by sending "SURVEY\n" over Serial.
+// Wire format: SURVEY,v1,<src_id>,<dst_id>,<avg_dist_mm>,<ok_samples>
+// ---------------------------------------------------------------------------
+static void runSurvey() {
+  uint8_t pairs = (N_ANCHORS * (N_ANCHORS - 1)) / 2;
+  char buf[64];
+
+  snprintf(buf, sizeof(buf), "SURVEY_BEGIN,v1,%u\n", pairs);
+  host.sendRaw(buf);
+  Serial.printf("Survey: %u anchors, %u pairs, %u samples each\n",
+                N_ANCHORS, pairs, SURVEY_SAMPLES);
+  oled.showSplash("SURVEY", "Running...", buf);
+
+  uint8_t pairIdx = 0;
+  for (uint8_t i = 0; i < N_ANCHORS; i++) {
+    for (uint8_t j = i + 1; j < N_ANCHORS; j++) {
+      uint8_t a = ANCHORS[i], b = ANCHORS[j];
+      float   sum = 0.0f;
+      uint16_t ok = 0;
+      pairIdx++;
+
+      Serial.printf("  Pair %u/%u  0x%02X -> 0x%02X:\n", pairIdx, pairs, a, b);
+
+      char oledL1[20], oledL2[20];
+      snprintf(oledL1, sizeof(oledL1), "%u/%u  %02X->%02X", pairIdx, pairs, a, b);
+
+      for (uint16_t s = 0; s < SURVEY_SAMPLES; s++) {
+        float dist, rxp;
+        if (engine.surveyRequest(a, b, dist, rxp)) {
+          sum += dist;
+          ok++;
+        }
+        if ((s & 0xF) == 0xF) {
+          Serial.printf("    [%u/%u ok=%u]\n", s + 1, SURVEY_SAMPLES, ok);
+          snprintf(oledL2, sizeof(oledL2), "%u/%u ok=%u", s+1, SURVEY_SAMPLES, ok);
+          oled.showSplash("SURVEY", oledL1, oledL2);
+        }
+        delay(5);
+      }
+
+      if (ok >= SURVEY_SAMPLES / 4) {
+        float mean = sum / ok;
+        uint32_t mm = (uint32_t)lroundf(mean * 1000.0f);
+        snprintf(buf, sizeof(buf), "SURVEY,v1,%u,%u,%lu,%u\n", a, b, mm, ok);
+        host.sendRaw(buf);
+        Serial.printf("  => %.3f m  (%u/%u ok)\n", mean, ok, SURVEY_SAMPLES);
+      } else {
+        Serial.printf("  FAILED (ok=%u/%u) — check link between 0x%02X and 0x%02X\n",
+                      ok, SURVEY_SAMPLES, a, b);
+      }
+    }
+  }
+
+  host.sendRaw("SURVEY_DONE,v1\n");
+  Serial.println("Survey complete.");
+  oled.showSplash("SURVEY", "DONE", "See Serial/MATLAB");
+}
+
+// ---------------------------------------------------------------------------
+// Antenna delay push: host sends "SETANTDELAY,<anchor_id>,<delay_ticks>".
+// Tag relays to the anchor via UWB; reports result back to host via HostLink.
+// ---------------------------------------------------------------------------
+static void handleSetAntDelay(const char* cmd) {
+  unsigned int aid = 0, ticks = 0;
+  if (sscanf(cmd, "SETANTDELAY,%u,%u", &aid, &ticks) != 2) {
+    Serial.println("[CAL] SETANTDELAY parse error — expected SETANTDELAY,<id>,<ticks>");
+    return;
+  }
+  uint8_t  anchorAddr = (uint8_t)aid;
+  uint16_t delayTicks = (uint16_t)ticks;
+  Serial.printf("[CAL] Pushing delay %u to anchor 0x%02X ...\n", delayTicks, anchorAddr);
+  oled.showSplash("CALIBRATE", "Push delay...", "");
+
+  bool ok = engine.pushAntDelay(anchorAddr, delayTicks);
+  char buf[48];
+  if (ok) {
+    snprintf(buf, sizeof(buf), "ANTDELAY_ACK,%u,%u\n", anchorAddr, delayTicks);
+    Serial.printf("[CAL] ACK from 0x%02X\n", anchorAddr);
+  } else {
+    snprintf(buf, sizeof(buf), "ANTDELAY_FAIL,%u,%u\n", anchorAddr, delayTicks);
+    Serial.printf("[CAL] No ACK from 0x%02X (anchor unreachable?)\n", anchorAddr);
+  }
+  host.sendRaw(buf);
+}
+
+// ---------------------------------------------------------------------------
+// Hardware antenna-delay calibration: binary-searches each ANCHOR's delay.
+// Host sends "HWCALIB,<anchor_id>,<true_dist_mm>".  Tag iterates: push a
+// candidate delay to the anchor, range CALIB_SAMPLES times, measure mean,
+// adjust bounds.  Final value is NVS-committed on the anchor.
+// Progress: HWCALIB_PROG,<id>,<iter>,<delay>,<mean_mm>,<err_mm>
+// Result:   HWCALIB_DONE,<id>,<final_delay>  or  HWCALIB_FAIL,<id>,<reason>
+// ---------------------------------------------------------------------------
+static void handleHwCalib(const char* cmd) {
+  unsigned int aid, trueDistMm;
+  if (sscanf(cmd, "HWCALIB,%u,%u", &aid, &trueDistMm) != 2) {
+    host.sendRaw("HWCALIB_FAIL,0,parse_error\n");
+    return;
+  }
+  uint8_t anchorAddr = (uint8_t)aid;
+  Serial.printf("[HWCAL] Calibrating anchor 0x%02X at true dist %u mm\n",
+                anchorAddr, trueDistMm);
+  char oledL1[20], oledL2[20];
+  snprintf(oledL1, sizeof(oledL1), "Anch 0x%02X", anchorAddr);
+  oled.showSplash("HW CALIB", oledL1, "Searching...");
+
+  uint16_t low = CALIB_DELAY_LO, high = CALIB_DELAY_HI;
+  for (uint8_t it = 0; it < CALIB_ITERS; it++) {
+    uint16_t mid = (low + high) / 2;
+    if (!engine.pushAntDelay(anchorAddr, mid, 1)) {
+      char buf[48];
+      snprintf(buf, sizeof(buf), "HWCALIB_FAIL,%u,push_timeout\n", aid);
+      host.sendRaw(buf);
+      return;
+    }
+    float sum = 0.0f; uint16_t ok = 0;
+    for (uint16_t s = 0; s < CALIB_SAMPLES; s++) {
+      float dist, rxp;
+      if (engine.rangeTo(anchorAddr, dist, rxp)) { sum += dist; ok++; }
+      delay(5);
+    }
+    if (ok < CALIB_SAMPLES / 4) {
+      char buf[48];
+      snprintf(buf, sizeof(buf), "HWCALIB_FAIL,%u,no_range\n", aid);
+      host.sendRaw(buf);
+      return;
+    }
+    float meanMm = (sum / ok) * 1000.0f;
+    int32_t errMm = (int32_t)(meanMm - (float)trueDistMm);
+    char buf[64];
+    snprintf(buf, sizeof(buf), "HWCALIB_PROG,%u,%u,%u,%u,%ld\n",
+             aid, it, mid, (uint32_t)meanMm, (long)errMm);
+    host.sendRaw(buf);
+    Serial.printf("  [%2u/%u] delay=%u  mean=%u mm  err=%+ld mm\n",
+                  (unsigned)(it + 1), (unsigned)CALIB_ITERS,
+                  mid, (uint32_t)meanMm, (long)errMm);
+    if ((it & 6) == 6) {
+      snprintf(oledL2, sizeof(oledL2), "it%u d=%u", it + 1, mid);
+      oled.showSplash("HW CALIB", oledL1, oledL2);
+    }
+    if (meanMm > (float)trueDistMm) low = mid; else high = mid;
+  }
+  uint16_t finalDelay = (low + high) / 2;
+  bool pushOk = engine.pushAntDelay(anchorAddr, finalDelay, 3);
+  char buf[48];
+  snprintf(buf, sizeof(buf), pushOk ? "HWCALIB_DONE,%u,%u\n"
+                                    : "HWCALIB_FAIL,%u,final_push\n",
+           aid, finalDelay);
+  host.sendRaw(buf);
+  Serial.printf("[HWCAL] Anchor 0x%02X: %s  delay=%u\n",
+                anchorAddr, pushOk ? "DONE" : "FAIL", finalDelay);
+  snprintf(oledL2, sizeof(oledL2), "d=%u %s", finalDelay, pushOk ? "OK" : "FAIL");
+  oled.showSplash("HW CALIB", oledL1, oledL2);
+}
+
+static void dispatchCmd(const char* cmd) {
+  if (strcmp(cmd, "SURVEY") == 0)
+    runSurvey();
+  else if (strncmp(cmd, "SETANTDELAY,", 12) == 0)
+    handleSetAntDelay(cmd);
+  else if (strncmp(cmd, "HWCALIB,", 8) == 0)
+    handleHwCalib(cmd);
+}
+
+void loop() {
+  ChargeMode::checkAndSleep(&oled);   // jumper 13-14 enters charge mode at any time
+
+  // Check for commands from the host via WiFi UDP (e.g. SETANTDELAY from calibration tool).
+  static char udpCmd[32];
+  if (host.receiveCmd(udpCmd, sizeof(udpCmd)) > 0)
+    dispatchCmd(udpCmd);
+
+  // Non-blocking check for serial commands.
+  static char cmdBuf[32];
+  static uint8_t cmdLen = 0;
+  while (Serial.available()) {
+    char c = (char)Serial.read();
+    if (c == '\n' || c == '\r') {
+      cmdBuf[cmdLen] = '\0';
+      dispatchCmd(cmdBuf);
+      cmdLen = 0;
+    } else if (cmdLen < sizeof(cmdBuf) - 1) {
+      cmdBuf[cmdLen++] = c;
+    }
+  }
+
+  // Multi-tag token ring: sweep + stream ONLY when it is our turn, then hand
+  // the token to the next tag. While waiting, ring.poll() keeps the receiver
+  // armed and watches for the grant addressed to us.
+  static uint8_t good = 0;
+  if (ring.poll()) {
+    good = scheduler.sweep();
+    ImuSample s;
+    bool hasImu = imu.read(s);
+    host.sendSweep(millis(), TAG_ID, scheduler, hasImu ? &s : nullptr);
+    ring.handoff();
+  }
+
+  static uint32_t oledLast = 0;
+  if (millis() - oledLast > 500) {
+    oledLast = millis();
+    char title[10], l1[20], l2[20];
+    snprintf(title, sizeof(title), "TAG  %02X", TAG_ID);
+    snprintf(l1,    sizeof(l1),    "Sweep #%lu", (unsigned long)scheduler.sweepSeq());
+    snprintf(l2,    sizeof(l2),    "%u/%u anchors OK", good, N_ANCHORS);
+    oled.showSplash(title, l1, l2);
+  }
+}
