@@ -1,19 +1,23 @@
 function registration = registerWorldFrame(worldPoints, opts)
-    %REGISTERWORLDFRAME Register the Kinect camera to a surveyed world frame.
+    %REGISTERWORLDFRAME Register the Kinect camera to the UWB anchor frame.
+    %
+    % UWB-repo port (2026-07-02) of MMS vision core/registerWorldFrame.m —
+    % algorithm unchanged; saves into this folder's calibration_data/.
     %
     % Solves the rigid transform (R, t) mapping camera-frame coordinates to a
-    % surveyed testbed frame (typically the UWB anchor frame from
-    % anchors.json), by detecting an AprilTag placed at K >= 3 known floor
-    % points. Replaces the plumb-camera (nadir) assumption, which cannot see
-    % camera tilt, mount-height error, or the offset/rotation between image
-    % axes and the testbed axes.
+    % surveyed testbed frame (the UWB anchor frame from anchors.json:
+    % origin = anchor 1, +X toward anchor 2), by detecting an AprilTag placed
+    % at K >= 3 known floor points. Replaces the plumb-camera (nadir)
+    % assumption, which cannot see camera tilt, mount-height error, or the
+    % offset/rotation between image axes and the testbed axes.
     %
     % PROCEDURE
     %   1. Survey K >= 4 points on the testbed floor in the SAME frame the UWB
-    %      anchors are expressed in (tape-measure from anchor positions, or use
-    %      marks at known coordinates). Spread them across the floor - corners
-    %      + center is ideal. Record the coordinates of the TAG CENTER when the
-    %      tag lies on each mark (z = tag stand/board thickness, usually ~0).
+    %      anchors are expressed in (tape-measure from the anchor-1 corner,
+    %      the same way the anchors were surveyed). Spread them across the
+    %      floor - corners + center is ideal. Record the coordinates of the
+    %      TAG CENTER when the tag lies on each mark (z = tag stand/board
+    %      thickness, usually ~0).
     %   2. Run: reg = registerWorldFrame(worldPoints);
     %      where worldPoints is Kx3 [x y z] in meters.
     %   3. Place the tag flat on point 1, press ENTER; repeat for each point.
@@ -47,7 +51,7 @@ function registration = registerWorldFrame(worldPoints, opts)
     config = visionSystemConfig();
     if ~isfield(opts, 'tagID'), opts.tagID = config.apriltag.base.id; end
     if ~isfield(opts, 'saveFile')
-        opts.saveFile = fullfile(fileparts(mfilename('fullpath')), '..', ...
+        opts.saveFile = fullfile(fileparts(mfilename('fullpath')), ...
                                  'calibration_data', 'world_registration.mat');
     end
 
@@ -153,6 +157,10 @@ function registration = registerWorldFrame(worldPoints, opts)
                           'tagID', opts.tagID, ...
                           'registeredDate', datestr(now, 'yyyy-mm-dd HH:MM:SS')); %#ok<TNOW1,DATST>
     if ~opts.dryRun
+        saveDir = fileparts(opts.saveFile);
+        if ~isempty(saveDir) && ~exist(saveDir, 'dir')
+            mkdir(saveDir);
+        end
         R_cam2world = R; t_cam2world = t; rmse_m = rmse; residuals_m = residuals; %#ok<NASGU>
         registeredDate = registration.registeredDate; %#ok<NASGU>
         save(opts.saveFile, 'R_cam2world', 't_cam2world', 'rmse_m', ...

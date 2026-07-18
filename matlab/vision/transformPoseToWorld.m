@@ -2,19 +2,22 @@ function [worldPos, worldRot] = transformPoseToWorld(camPos, camRot, config)
     %TRANSFORMPOSETOWORLD Camera-frame AprilTag pose -> world/testbed frame.
     %
     % Single source of truth for the camera->world transform. Every caller
-    % (getAprilTagPose, aprilTagOdometry_3D, examples) should use this instead
-    % of local copies of transformToWorld/transformRotationToWorld.
+    % (getAprilTagPose, aprilTagOdometry_3D, aprilTagDistanceTest) should use
+    % this instead of local copies of transformToWorld.
+    %
+    % UWB-repo port (2026-07-02) of MMS vision core/transformPoseToWorld.m —
+    % logic unchanged.
     %
     % Two modes:
     %   1. REGISTERED (preferred): if config.extrinsics.available is true, a
     %      rigid transform (R, t) solved from AprilTag detections at surveyed
-    %      testbed points (see core/registerWorldFrame.m) maps camera-frame
-    %      coordinates into the surveyed world frame (e.g. the UWB anchor
-    %      frame). This accounts for camera tilt, mount height error, and any
+    %      testbed points (see registerWorldFrame.m) maps camera-frame
+    %      coordinates into the surveyed world frame (the UWB anchor frame).
+    %      This accounts for camera tilt, mount height error, and any
     %      offset/rotation between image axes and the testbed axes.
     %   2. LEGACY NADIR fallback: assumes a perfectly plumb, level camera at
     %      config.camera.height with world origin on the floor directly below
-    %      it (X-right, Y-forward, Z-up). This was the original behaviour.
+    %      it (X-right, Y-forward, Z-up).
     %
     % Inputs:
     %   camPos - 1x3 or 3x1 tag position in camera frame (meters), i.e.

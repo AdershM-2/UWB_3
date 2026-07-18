@@ -13,8 +13,20 @@ IMU gyro confirmed working when moving.
 
 ## Steps
 1. **Fix hardware** — ✅ DONE. (Still worth letting A1 run ~10 min on battery to fully confirm.)
-2. **Ground truth (Kinect)** — NEXT. Re-run Kinect world registration (old RMSE 0.259 m is too big).
-   Build the trajectory recorder (Kinect → AprilTag → world-frame CSV). Time-sync to UWB.
+2. **Ground truth (Kinect overhead camera)** — NEXT. Full context in
+   `docs/camera_calibration_handoff.md`. Tools live in `matlab/vision/` (copied in from
+   D:\UWB_modules_new). Kinect is roof-mounted looking straight down; height fixed by parallax
+   (h ≈ 3.873 m, provisional ±0.2 m). No valid world registration yet, and `config/anchors.json`
+   does **not** match the real ~2.5×2.6 m layout (anchor 5 near centre). Do the accuracy plan **in order**:
+   - **2.1 Clean parallax round** — `estimateCameraHeight`: plumb-bob chair/box hops + anchor
+     base→antenna-tip clicks → pin h / nadir / tilt. Targets: h ±3–5 cm, per-hop spread < 0.15 m,
+     expect h ∈ [3.6, 4.0], implied f ≈ 1020.
+   - **2.2 Stage A** — `calibrateOverheadCamera` plumb-line strings → distortion k1/k2. Target: corrected bow < 2 px.
+   - **2.3 Stage B** — AprilTag floor sweep (12+ spots) + tape scale bar → floor homography. Target: corner reproj < 1 px, scale-bar error < 0.5%.
+   - **2.4 Stage C** — box hops → focal length f_est (supersedes 1050). Cross-check f ≈ 1020.
+   - **2.5 `auditFloorScale`** acceptance test — every zone 0.99–1.01.
+   - **2.6** Fix `anchors.json` to the real layout (tape or Phase-1.5 self-survey), then re-run
+     `registerWorldFrameClicks`. Then build the trajectory recorder (Kinect → AprilTag → world CSV) + time-sync to UWB.
 3. **MATLAB pipeline** — NEXT. Read serial stream → parse `RTLS` line → correct bias → NLOS weights →
    weighted multilateration → live position. Reads **COM** (UDP blocked on `iitk`).
 4. **Redo calibration** — anchor geometry (self-survey), per-anchor + per-tag bias, Tier-2 spatial
