@@ -1,8 +1,3 @@
-# ── Oversized / non-project files ───────────────────────────────────────────
-# Andy Weir novel (~153 MB) accidentally dropped in paper/. Exceeds GitHub's
-# 100 MB per-file hard limit — must never be committed. Move it out of the repo.
-paper/Project Hail Mary - Project Mary Hail.pdf
-
 # ── LaTeX build artifacts ────────────────────────────────────────────────────
 *.aux
 *.log
@@ -21,7 +16,7 @@ paper/Project Hail Mary - Project Mary Hail.pdf
 *.asv
 *.m~
 
-# ── Python ───────────────────────────────────────────────────────────────────
+# ── Python (legacy runtime, retired — host pipeline is MATLAB) ────────────────
 __pycache__/
 *.pyc
 .venv/
