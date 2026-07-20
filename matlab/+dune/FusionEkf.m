@@ -22,6 +22,11 @@ classdef FusionEkf < handle
         posSigma     = 0.08   % m, fallback position-measurement sigma
         zuptSigma    = 0.05   % m/s, ZUPT pseudo-measurement sigma
         maxConsecReject = 10  % reinit from the fix after this many rejections
+        stillMode = false     % set by the driver when stillness is detected:
+                              % caps process noise so the state can actually
+                              % pin (ZUPT alone clamps velocity, but the CV
+                              % Q keeps re-injecting position uncertainty)
+        sigmaAccelStill = 0.05
     end
     properties (SetAccess = private)
         x = zeros(6, 1)
@@ -68,6 +73,7 @@ classdef FusionEkf < handle
                 obj.x = F * obj.x;
                 sa = obj.sigmaAccelCV;
             end
+            if obj.stillMode, sa = min(sa, obj.sigmaAccelStill); end
             % Bias states are unobservable without IMU accel input - freeze
             % their random walk in CV mode so P(bias) cannot grow unbounded.
             if useImu, sb = obj.sigmaBiasRW; else, sb = 0; end

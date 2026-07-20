@@ -28,7 +28,7 @@ arguments
     opts.bias (1,1) logical = false
     opts.powerCorr (1,1) logical = true   % DW1000 power-bias correction
     opts.ekf (1,1) logical = true         % FusionEkf smoothing on the display
-    opts.tagZ (1,1) double = 0.22
+    opts.tagZ (1,1) double = 0.24         % tag antenna height (matches truth clicks)
     opts.trail (1,1) double = 300
     opts.margin (1,1) double = 2.0   % plot margin around the anchors (m)
     opts.logDir string = ""
@@ -79,7 +79,8 @@ nSweeps = 0; nSolved = 0; nRejected = 0;
 queried = [];
 ekf = dune.FusionEkf();
 tPrevEkf = NaN;
-histA = nan(1, 8); histG = nan(1, 8);   % rolling stillness window (ZUPT)
+histA = nan(1, 8); histG = nan(1, 8);   % rolling stillness window (IMU ZUPT)
+stillCnt = 0;                            % UWB-only stillness (no-IMU tags)
 
 while ishandle(fig)
     for e = ts.drainEvents()
@@ -102,6 +103,20 @@ while ishandle(fig)
             dt = 0;
             if isfinite(tPrevEkf), dt = min(max(s.thost - tPrevEkf, 0), 1); end
             tPrevEkf = s.thost;
+            % Stillness detection BEFORE predict: still -> ZUPT + frozen
+            % process noise, so the state can truly pin while parked.
+            if ~isempty(s.imu) && s.imu.status >= 1
+                histA = [histA(2:end), norm(s.imu.acc)];
+                histG = [histG(2:end), norm(s.imu.gyro)];
+                still = all(isfinite(histA)) && ...
+                        max(histA) < 0.12 && max(histG) < 0.05;
+            else
+                % No IMU on this tag: infer stillness from the filter itself
+                % (calm innovations + near-zero velocity for ~1.5 s; real
+                % motion breaks the condition within a sweep or two).
+                still = stillCnt >= 10;
+            end
+            ekf.stillMode = still;
             ekf.predict(dt, []);
             if all(isfinite(p))
                 ekf.updatePosition(p, adaptiveR(info, ekf.posSigma));
@@ -109,12 +124,14 @@ while ishandle(fig)
                     ekf.reinitFrom(p);
                 end
             end
-            if ~isempty(s.imu) && s.imu.status >= 1
-                histA = [histA(2:end), norm(s.imu.acc)];
-                histG = [histG(2:end), norm(s.imu.gyro)];
-                if all(isfinite(histA)) && max(histA) < 0.12 && max(histG) < 0.05 ...
-                        && ekf.initialized
-                    ekf.updateZupt();
+            if still && ekf.initialized
+                ekf.updateZupt();
+            end
+            if isempty(s.imu) && ekf.initialized
+                if norm(ekf.vel) < 0.08 && ekf.lastNis < 3
+                    stillCnt = stillCnt + 1;
+                else
+                    stillCnt = 0;
                 end
             end
             if ekf.initialized, pe = ekf.pos; end

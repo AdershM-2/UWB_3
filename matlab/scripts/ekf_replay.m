@@ -99,6 +99,7 @@ for i = 1:N
         end
     end
     imuMode(i) = ~isempty(aW);
+    ekf.stillMode = still;      % still -> ZUPT + frozen process noise
     ekf.predict(dt, aW);
 
     [p, info] = dune.solveSweep(s, A, rangeCorr=RC, tagZ=opts.tagZ, x0=prevRaw);
