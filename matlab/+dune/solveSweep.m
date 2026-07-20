@@ -13,6 +13,9 @@ function [pos, info] = solveSweep(sweep, A, opts)
 %                host-side correction. Default is OFF: the boards' NVS
 %                antenna delays are the source of truth (re-tuned in step 4);
 %                subtracting anchor_bias.json on top would double-correct.
+%   opts.rangeCorr  struct from dune.loadRangeCorrection, or [] (default).
+%                Per-anchor DW1000 power bias: corr_mm = slope*fp + icept,
+%                fp clamped to the fitted window; corrected = raw - corr.
 %   opts.tagZ    tag antenna height (m, default 0.22)
 %   opts.x0      warm-start position [1x2] (default: weighted centroid)
 %   opts.useGapWeights  NLOS soft weights from rx-fp gap (default true)
@@ -33,6 +36,7 @@ arguments
     sweep (1,1) struct
     A (1,1) struct
     opts.bias = []
+    opts.rangeCorr = []
     opts.tagZ (1,1) double = 0.22
     opts.x0 double = []
     opts.useGapWeights (1,1) logical = true
@@ -62,6 +66,15 @@ for k = 1:numel(sweep.ids)
 end
 
 corr = range;
+if ~isempty(opts.rangeCorr)
+    C = opts.rangeCorr;
+    for c = 1:M
+        j = find(C.ids == A.ids(c), 1);
+        if isempty(j) || ~isfinite(fp(c)) || ~isfinite(corr(c)), continue; end
+        f = min(max(fp(c), C.fpMin(j)), C.fpMax(j));
+        corr(c) = corr(c) - (C.slope(j) * f + C.icept(j)) / 1000;
+    end
+end
 if ~isempty(opts.bias)
     B = opts.bias;
     for c = 1:M

@@ -26,6 +26,7 @@ function live_tag(port, opts)
 arguments
     port string = ""
     opts.bias (1,1) logical = false
+    opts.powerCorr (1,1) logical = true   % DW1000 power-bias correction
     opts.tagZ (1,1) double = 0.22
     opts.trail (1,1) double = 300
     opts.margin (1,1) double = 2.0   % plot margin around the anchors (m)
@@ -35,6 +36,8 @@ end
 A = dune.loadAnchors();
 B = [];
 if opts.bias, B = dune.loadAnchorBias(); end
+RC = [];
+if opts.powerCorr, RC = dune.loadRangeCorrection(); end
 
 %% Log files
 if opts.logDir == "", opts.logDir = fullfile(dune.rootDir(), 'logs'); end
@@ -48,8 +51,9 @@ ts = dune.TagSerial(port);
 ts.rawLogFid = fopen(fullfile(opts.logDir, ['serial_raw_' stamp '.log']), 'w');
 cleanup = onCleanup(@() endSession(ts, fid, logFile));
 ts.start();
-fprintf('Listening on %s @ %d baud (%s, host bias %s)\n', ...
-        ts.port, ts.baud, A.layout, string(opts.bias));
+fprintf('Listening on %s @ %d baud (%s, host bias %s, power corr %s)\n', ...
+        ts.port, ts.baud, A.layout, string(opts.bias), ...
+        string(~isempty(RC)));
 fprintf('Logging to %s\n', logFile);
 
 %% Figure
@@ -83,7 +87,8 @@ while ishandle(fig)
             queried(end+1) = s.tag; %#ok<AGROW>
             ts.send(sprintf('GETMYDELAY,%d', s.tag));   % report NVS delay state
         end
-        [p, info] = dune.solveSweep(s, A, bias=B, tagZ=opts.tagZ, x0=prevPos);
+        [p, info] = dune.solveSweep(s, A, bias=B, rangeCorr=RC, ...
+                                    tagZ=opts.tagZ, x0=prevPos);
         nRejected = nRejected + nnz(info.rejected);
         fprintf(fid, '%s\n', jsonencode(dune.sweepRecord(s, p, info, A)));
         if all(isfinite(p))

@@ -19,9 +19,12 @@ arguments
     opts.tagId (1,1) double = 240
     opts.tagZ (1,1) double = 0.24    % must match how the truth is clicked
     opts.measureS (1,1) double = 20
+    opts.powerCorr (1,1) logical = true
 end
 
 A = dune.loadAnchors();
+RC = [];
+if opts.powerCorr, RC = dune.loadRangeCorrection(); end
 
 stamp = datestr(now, 'yyyymmdd_HHMMSS'); %#ok<TNOW1,DATST>
 outDir = fullfile(dune.rootDir(), 'results', ['static_accuracy_' stamp]);
@@ -39,7 +42,8 @@ ts.drain(); ts.drainEvents();
 
 pr(rpt, 'DUNE step-5 static accuracy — %s', stamp);
 pr(rpt, 'Anchors: %s (%s)', A.file, A.layout);
-pr(rpt, 'Tag %d, tagZ %.2f m, %d s per spot', opts.tagId, opts.tagZ, opts.measureS);
+pr(rpt, 'Tag %d, tagZ %.2f m, %d s per spot, power corr %s', ...
+   opts.tagId, opts.tagZ, opts.measureS, string(~isempty(RC)));
 
 spots = struct('k', {}, 'truth', {}, 'medPos', {}, 'biasMm', {}, ...
                'stats', {}, 'anchorErrMm', {}, 'n', {});
@@ -70,7 +74,8 @@ while true
     R = nan(N, numel(A.ids));
     prev = [];
     for i = 1:N
-        [p, info] = dune.solveSweep(sweeps{i}, A, tagZ=opts.tagZ, x0=prev);
+        [p, info] = dune.solveSweep(sweeps{i}, A, rangeCorr=RC, ...
+                                    tagZ=opts.tagZ, x0=prev);
         P(i, :) = p;
         R(i, :) = info.range';
         if all(isfinite(p)), prev = p; end
