@@ -17,7 +17,9 @@ function truth = clickTagTruth(tagZ, opts)
     %
     % Inputs:
     %   tagZ - height of the UWB tag antennas above the floor (m)
-    %   opts - optional struct: .uwbTagIds (default [240 241]),
+    %   opts - optional. Either a vector of tag ids to click, e.g.
+    %              clickTagTruth(0.22, 240)         % single tag
+    %          or a struct: .uwbTagIds (default [240 241]),
     %          .anchorsFile, .outFile, .dryRun
     %
     % Output: the truth struct that was written.
@@ -27,6 +29,7 @@ function truth = clickTagTruth(tagZ, opts)
               'Give the tag antenna height above the floor in meters, e.g. clickTagTruth(0.22)');
     end
     if nargin < 2, opts = struct(); end
+    if isnumeric(opts), opts = struct('uwbTagIds', opts); end
     if ~isfield(opts, 'uwbTagIds'), opts.uwbTagIds = [240, 241]; end
     if ~isfield(opts, 'dryRun'), opts.dryRun = false; end
     if ~isfield(opts, 'anchorsFile')
