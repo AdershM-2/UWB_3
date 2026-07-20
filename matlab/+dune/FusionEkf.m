@@ -68,17 +68,21 @@ classdef FusionEkf < handle
                 obj.x = F * obj.x;
                 sa = obj.sigmaAccelCV;
             end
-            sb = obj.sigmaBiasRW;
+            % Bias states are unobservable without IMU accel input - freeze
+            % their random walk in CV mode so P(bias) cannot grow unbounded.
+            if useImu, sb = obj.sigmaBiasRW; else, sb = 0; end
             Q = [sa^2*(dt^3/3)*I2, sa^2*(dt^2/2)*I2, Z2;
                  sa^2*(dt^2/2)*I2, sa^2*dt*I2,       Z2;
                  Z2,               Z2,               sb^2*dt*I2];
             obj.P = F * obj.P * F' + Q;
         end
 
-        function ok = update(obj, z, H, R)
+        function ok = update(obj, z, H, R, zhat)
             % Generic gated EKF update. Gate: chi2(dof, 0.95).
+            % zhat: predicted measurement for nonlinear h(x); default H*x.
             CHI2_95 = [3.841, 5.991, 7.815];   % dof 1..3
-            y = z(:) - H * obj.x;
+            if nargin < 5, zhat = H * obj.x; end
+            y = z(:) - zhat(:);
             S = H * obj.P * H' + R;
             nis = y' * (S \ y);
             obj.lastNis = nis;
@@ -90,8 +94,44 @@ classdef FusionEkf < handle
             end
             K = (obj.P * H') / S;
             obj.x = obj.x + K * y;
-            obj.P = (eye(6) - K * H) * obj.P;
-            obj.P = (obj.P + obj.P') / 2;      % keep symmetric
+            % Joseph form: valid for any (even suboptimal) gain, keeps P PSD.
+            IKH = eye(6) - K * H;
+            obj.P = IKH * obj.P * IKH' + K * R * K';
+            obj.P = (obj.P + obj.P') / 2;
+        end
+
+        function nAcc = updateRanges(obj, anchorPos, ranges, weights, tagZ, sigmaR)
+            % Tightly-coupled sequential range updates, chi2(1)-gated each.
+            % Rejects individual NLOS ranges instead of whole fixes, and
+            % still extracts information from sweeps with < 3 anchors.
+            %   anchorPos [Mx3], ranges [Mx1] (NaN = absent), weights [Mx1]
+            %   (NLOS soft weights -> R_i = sigmaR^2 / w_i), tagZ, sigmaR.
+            if nargin < 6, sigmaR = 0.05; end
+            if nargin < 5, tagZ = 0.24; end
+            if nargin < 4 || isempty(weights), weights = ones(size(ranges)); end
+            nAcc = 0;
+            if ~obj.initialized, return; end
+            for k = find(isfinite(ranges(:)') & weights(:)' > 0)
+                dx = obj.x(1) - anchorPos(k, 1);
+                dy = obj.x(2) - anchorPos(k, 2);
+                dz2 = (anchorPos(k, 3) - tagZ)^2;
+                pred = max(sqrt(dx^2 + dy^2 + dz2), 1e-6);
+                H = [dx / pred, dy / pred, 0, 0, 0, 0];
+                Rk = sigmaR^2 / weights(k);
+                nAcc = nAcc + obj.update(ranges(k), H, Rk, pred);
+            end
+            if nAcc > 0
+                obj.consecReject = 0;
+            else
+                obj.consecReject = obj.consecReject + 1;
+            end
+        end
+
+        function reinitFrom(obj, pos)
+            % Manual re-anchor (used by drivers when a reject streak persists).
+            obj.initialize(pos);
+            obj.nReinit = obj.nReinit + 1;
+            obj.consecReject = 0;
         end
 
         function ok = updatePosition(obj, pos, R)

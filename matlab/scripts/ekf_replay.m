@@ -20,6 +20,14 @@ arguments
     opts.powerCorr (1,1) logical = true
     opts.useImu (1,1) logical = true       % IMU stillness detection -> ZUPT
     opts.useImuAccel (1,1) logical = false % IMU-driven prediction (frame check pending, 7.3)
+    opts.mode string = "pos"               % "pos" = position-fix updates (default,
+                                           % robust); "ranges" = tightly-coupled
+                                           % per-range updates (EXPERIMENTAL: on the
+                                           % static campaign it underperforms - it
+                                           % needs per-range timing + moving truth
+                                           % (7.5) to show its motion-coherence
+                                           % advantage, and stricter ZUPT first)
+    opts.sigmaR (1,1) double = 0.05        % per-range meas sigma (ranges mode)
     opts.spotsJson string = ""
     opts.settleS (1,1) double = 2
     opts.sigmaAccelCV double = []      % override FusionEkf defaults if set
@@ -69,6 +77,7 @@ Praw = nan(N, 2); Pekf = nan(N, 2); thost = nan(N, 1);
 imuMode = false(N, 1); zupt = false(N, 1); accepted = true(N, 1);
 prevRaw = [];
 tPrev = NaN;
+divergeStreak = 0;
 histA = nan(1, 8); histG = nan(1, 8);   % rolling |acc| / |gyro| for stillness
 for i = 1:N
     s = sw{i};
@@ -94,17 +103,35 @@ for i = 1:N
 
     [p, info] = dune.solveSweep(s, A, rangeCorr=RC, tagZ=opts.tagZ, x0=prevRaw);
     Praw(i, :) = p;
-    if all(isfinite(p))
-        prevRaw = p;
-        Rm = info.cov;
-        if all(isfinite(Rm(:)))
-            Rm = Rm + eye(2) * 0.02^2;
-            Rm(1,1) = min(Rm(1,1), 0.3^2); Rm(2,2) = min(Rm(2,2), 0.3^2);
+    if all(isfinite(p)), prevRaw = p; end
+
+    if opts.mode == "ranges"
+        if ~ekf.initialized
+            if all(isfinite(p)), ekf.updatePosition(p); end   % first fix = init
         else
-            Rm = eye(2) * ekf.posSigma^2;
+            nAcc = ekf.updateRanges(A.pos, info.rangeCorr, info.w, ...
+                                    opts.tagZ, opts.sigmaR);
+            accepted(i) = nAcc > 0;
+            % Recovery nets. Partial acceptance can keep a tightly-coupled
+            % filter alive at a WRONG position (1-2 ranges still fit), so a
+            % reject-streak alone is not enough: also re-anchor when the EKF
+            % persistently disagrees with a solid standalone fix.
+            solid = all(isfinite(p)) && nnz(info.used) >= 4 && info.rmse < 0.10;
+            if solid && norm(ekf.pos - p) > 0.5
+                divergeStreak = divergeStreak + 1;
+            elseif solid
+                divergeStreak = 0;
+            end
+            if (ekf.consecReject >= ekf.maxConsecReject || divergeStreak >= 5) ...
+                    && all(isfinite(p))
+                ekf.reinitFrom(p);
+                divergeStreak = 0;
+            end
         end
-        if nnz(info.used) <= 3, Rm = Rm * 4; end
-        accepted(i) = ekf.updatePosition(p, Rm);
+    else
+        if all(isfinite(p))
+            accepted(i) = ekf.updatePosition(p, adaptiveR(info, ekf.posSigma));
+        end
     end
     if still && ekf.initialized
         ekf.updateZupt();
@@ -181,4 +208,21 @@ if ~opts.quiet
         out.overall(1), out.overall(2), 1000 * median(allRaw), 1000 * median(allEkf), ...
         1000 * prctile(allRaw, 95), 1000 * prctile(allEkf, 95));
 end
+end
+
+%% ── helpers ────────────────────────────────────────────────────────────────
+function R = adaptiveR(info, posSigma)
+% Port of the old runtime's _adaptive_R: LM covariance inflated by solver
+% RMSE, mean NLOS gap, and a DOP proxy (clipped 1..50x).
+if all(isfinite(info.cov(:)))
+    Rb = info.cov + eye(2) * 0.02^2;
+else
+    Rb = eye(2) * posSigma^2;
+end
+rmsF = 1 + (info.rmse / 0.05)^2;
+g = info.gap(isfinite(info.gap) & isfinite(info.range));
+if isempty(g), nlosF = 1; else, nlosF = 1 + mean(max(0, g / 6)); end
+dop = sqrt(trace(Rb));
+dopF = 1 + max(0, (dop - 0.05) / 0.05);
+R = Rb * min(max(rmsF * nlosF * dopF, 1), 50);
 end
