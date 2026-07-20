@@ -82,22 +82,44 @@ function calib = calibrateOverheadCamera(opts)
     cleanupObj = onCleanup(@() release(kinectObj)); %#ok<NASGU>
 
     %% ================= STAGE A: plumb lines -> distortion =================
-    if ~strcmpi(strtrim(input(['\nSTAGE A — plumb-line distortion. Strings laid? ' ...
-                               '(ENTER = run, s = skip): '], 's')), 's')
-        frame = grabFrame(kinectObj);
-        fig = figure('Name', 'Stage A: click along each taut string', ...
+    if ~strcmpi(strtrim(input(['\nSTAGE A — plumb-line distortion. Stick / straightedge ' ...
+                               'ready? (ENTER = run, s = skip): '], 's')), 's')
+        % One stick, moved between lines: grab a FRESH frame for each line so a
+        % single straightedge can be repositioned each time. The camera is
+        % fixed, so lines captured across different frames share one distortion
+        % model; prior lines are overlaid (cyan) to help you cover new areas.
+        nps = input('  Points to click per line (auto-advances after that many; ENTER = 8): ', 's');
+        nPts = str2double(nps);
+        if isempty(strtrim(nps)) || ~isfinite(nPts) || nPts < 4, nPts = 8; end
+        nPts = round(nPts);
+        fig = figure('Name', 'Stage A: click along the stick (fresh frame per line)', ...
                      'Position', [50, 50, 1500, 850]);
-        imshow(frame); hold on;
         linesPix = {};
         while true
-            if ~isempty(linesPix)
-                ans_ = input(sprintf('Line %d captured. Another line? (ENTER = yes, s = done): ', ...
-                                     numel(linesPix)), 's');
-                if strcmpi(strtrim(ans_), 's'), break; end
+            n = numel(linesPix);
+            if n == 0
+                input('  Place the stick for line 1, then ENTER to grab a frame...', 's');
+            else
+                ans_ = input(sprintf(['  Line %d captured. Reposition + ENTER for the next ' ...
+                                      '(r = redo last line, s = done): '], n), 's');
+                cmd = lower(strtrim(ans_));
+                if strcmp(cmd, 's'), break; end
+                if strcmp(cmd, 'r') && ~isempty(linesPix)
+                    linesPix(end) = [];
+                    fprintf('  Line %d dropped — re-lay the stick and re-click it.\n', n);
+                end
             end
-            fprintf(['Click >= 6 points ALONG one string (both ends + middle, ' ...
-                     'zoom first if needed), then press ENTER.\n']);
-            [us, vs] = ginput;
+            frame = grabFrame(kinectObj);
+            figure(fig); clf; imshow(frame); hold on;
+            for kk = 1:numel(linesPix)
+                plot(linesPix{kk}(:, 1), linesPix{kk}(:, 2), 'c.-', 'MarkerSize', 6);
+                text(linesPix{kk}(1, 1) + 8, linesPix{kk}(1, 2), sprintf('L%d', kk), ...
+                     'Color', 'cyan');
+            end
+            fprintf(['Click %d points ALONG the stick, spread end-to-end (scroll to ' ...
+                     'zoom first if needed). Advances automatically after %d clicks — ' ...
+                     'no Enter needed.\n'], nPts, nPts);
+            [us, vs] = ginput(nPts);
             if numel(us) < 4
                 fprintf('Only %d points — need >= 4 (>= 6 recommended). Line discarded.\n', numel(us));
                 continue;

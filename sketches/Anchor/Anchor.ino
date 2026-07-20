@@ -17,7 +17,7 @@
 #include <Preferences.h>
 
 // >>>>>>>>>>>>>>>>> SET PER BOARD <<<<<<<<<<<<<<<<<<
-static const uint8_t  ANCHOR_ID     = 0x01;  // unique: 0x01, 0x02, 0x03, ...
+static const uint8_t  ANCHOR_ID     = 0x05;  // unique: 0x01, 0x02, 0x03, ...
 static const uint16_t ANTENNA_DELAY = 16434; // factory default — overridden by NVS if calibrated
 // <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
 
