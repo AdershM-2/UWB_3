@@ -27,6 +27,7 @@ arguments
     port string = ""
     opts.bias (1,1) logical = false
     opts.powerCorr (1,1) logical = true   % DW1000 power-bias correction
+    opts.ekf (1,1) logical = true         % FusionEkf smoothing on the display
     opts.tagZ (1,1) double = 0.22
     opts.trail (1,1) double = 300
     opts.margin (1,1) double = 2.0   % plot margin around the anchors (m)
@@ -65,6 +66,7 @@ xlim(ax, [min(A.pos(:, 1)) - opts.margin, max(A.pos(:, 1)) + opts.margin]);
 ylim(ax, [min(A.pos(:, 2)) - opts.margin, max(A.pos(:, 2)) + opts.margin]);
 xlabel(ax, 'x (m)'); ylabel(ax, 'y (m)');
 trailH = plot(ax, nan, nan, '.-', 'Color', [0.35 0.55 0.9], 'MarkerSize', 6);
+rawH   = plot(ax, nan, nan, 'o', 'Color', [0.65 0.65 0.65], 'MarkerSize', 6);
 dotH   = plot(ax, nan, nan, 'o', 'MarkerFaceColor', 'r', 'MarkerEdgeColor', 'r', ...
               'MarkerSize', 9);
 ttl = title(ax, 'waiting for RTLS stream...');
@@ -75,6 +77,9 @@ prevPos = [];
 tRate = [];
 nSweeps = 0; nSolved = 0; nRejected = 0;
 queried = [];
+ekf = dune.FusionEkf();
+tPrevEkf = NaN;
+histA = nan(1, 8); histG = nan(1, 8);   % rolling stillness window (ZUPT)
 
 while ishandle(fig)
     for e = ts.drainEvents()
@@ -90,11 +95,39 @@ while ishandle(fig)
         [p, info] = dune.solveSweep(s, A, bias=B, rangeCorr=RC, ...
                                     tagZ=opts.tagZ, x0=prevPos);
         nRejected = nRejected + nnz(info.rejected);
-        fprintf(fid, '%s\n', jsonencode(dune.sweepRecord(s, p, info, A)));
+
+        % EKF smoothing (CV predict + gated position update + windowed ZUPT)
+        pe = [NaN, NaN];
+        if opts.ekf
+            dt = 0;
+            if isfinite(tPrevEkf), dt = min(max(s.thost - tPrevEkf, 0), 1); end
+            tPrevEkf = s.thost;
+            ekf.predict(dt, []);
+            if all(isfinite(p))
+                ekf.updatePosition(p, adaptiveR(info, ekf.posSigma));
+                if ekf.consecReject >= ekf.maxConsecReject
+                    ekf.reinitFrom(p);
+                end
+            end
+            if ~isempty(s.imu) && s.imu.status >= 1
+                histA = [histA(2:end), norm(s.imu.acc)];
+                histG = [histG(2:end), norm(s.imu.gyro)];
+                if all(isfinite(histA)) && max(histA) < 0.12 && max(histG) < 0.05 ...
+                        && ekf.initialized
+                    ekf.updateZupt();
+                end
+            end
+            if ekf.initialized, pe = ekf.pos; end
+        end
+        fprintf(fid, '%s\n', jsonencode(dune.sweepRecord(s, p, info, A, pe)));
+
+        disp_ = p;
+        if opts.ekf && all(isfinite(pe)), disp_ = pe; end
+        if all(isfinite(p)), set(rawH, 'XData', p(1), 'YData', p(2)); end
         if all(isfinite(p))
             nSolved = nSolved + 1;
             prevPos = p;
-            trail = [trail(2:end, :); p];
+            trail = [trail(2:end, :); disp_];
             tRate(end+1) = s.thost; %#ok<AGROW>
             tRate(tRate < s.thost - 10) = [];
             set(trailH, 'XData', trail(:, 1), 'YData', trail(:, 2));
@@ -107,10 +140,12 @@ while ishandle(fig)
             end
             hz = NaN;
             if numel(tRate) > 1, hz = (numel(tRate) - 1) / (tRate(end) - tRate(1)); end
-            ttl.String = sprintf(['tag %d   (%.2f, %.2f) m   %.1f Hz   ' ...
+            mode = '';
+            if opts.ekf && all(isfinite(pe)), mode = ' EKF'; end
+            ttl.String = sprintf(['tag %d%s   (%.2f, %.2f) m   %.1f Hz   ' ...
                                   '%d/%d anchors   resid %.0f mm   solved %d/%d'], ...
-                s.tag, p(1), p(2), hz, nnz(info.used), nnz(~isnan(info.range)), ...
-                1000 * info.rmse, nSolved, nSweeps);
+                s.tag, mode, disp_(1), disp_(2), hz, nnz(info.used), ...
+                nnz(~isnan(info.range)), 1000 * info.rmse, nSolved, nSweeps);
         else
             ttl.String = sprintf('tag %d   NO FIX (%d anchors usable)   solved %d/%d', ...
                 s.tag, nnz(~isnan(info.range)), nSolved, nSweeps);
@@ -128,4 +163,19 @@ function endSession(ts, fid, logFile)
 delete(ts);            % stops the callback, releases COM, closes raw log
 fclose(fid);
 fprintf('Session log: %s\n', logFile);
+end
+
+function R = adaptiveR(info, posSigma)
+% LM covariance inflated by solver RMSE, mean NLOS gap, and a DOP proxy.
+if all(isfinite(info.cov(:)))
+    Rb = info.cov + eye(2) * 0.02^2;
+else
+    Rb = eye(2) * posSigma^2;
+end
+rmsF = 1 + (info.rmse / 0.05)^2;
+g = info.gap(isfinite(info.gap) & isfinite(info.range));
+if isempty(g), nlosF = 1; else, nlosF = 1 + mean(max(0, g / 6)); end
+dop = sqrt(trace(Rb));
+dopF = 1 + max(0, (dop - 0.05) / 0.05);
+R = Rb * min(max(rmsF * nlosF * dopF, 1), 50);
 end

@@ -1,6 +1,7 @@
-function rec = sweepRecord(s, p, info, A)
+function rec = sweepRecord(s, p, info, A, posEkf)
 %SWEEPRECORD One solved sweep -> JSONL-ready struct (readSessionLog schema).
 %   rec = dune.sweepRecord(sweep, pos, info, A)
+%   rec = dune.sweepRecord(sweep, pos, info, A, posEkf)   % adds ex/ey
 %   Write with: fprintf(fid, '%s\n', jsonencode(rec));
 %
 %   Fields mirror the historical Python logger so dune.readSessionLog and
@@ -19,6 +20,10 @@ end
 if all(isfinite(p))
     rec.x = round(p(1), 4);
     rec.y = round(p(2), 4);
+end
+if nargin >= 5 && numel(posEkf) == 2 && all(isfinite(posEkf))
+    rec.ex = round(posEkf(1), 4);
+    rec.ey = round(posEkf(2), 4);
 end
 rec.nUsed = nnz(info.used);
 if isfinite(info.rmse), rec.rmse = round(info.rmse, 4); end
