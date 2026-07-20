@@ -30,6 +30,9 @@ arguments
     opts.nlos (1,1) logical = true        % soft NLOS gap weights (false =
                                           % rely on the MAD gate only; parked
                                           % tests show equal/slightly better)
+    opts.hold (1,1) logical = true        % last-known-range hold: keep the
+                                          % full anchor geometry when anchors
+                                          % miss a sweep (no subset jumps)
     opts.ekf (1,1) logical = true         % FusionEkf smoothing on the display
     opts.mode string = "pos"              % "pos" = fix updates (robust);
                                           % "ranges" = tightly-coupled with
@@ -90,6 +93,7 @@ ekf = dune.FusionEkf();
 if opts.mode == "ranges"
     ekf.enableRangeBias(numel(A.ids));   % per-anchor bias memory
 end
+rh = dune.RangeHold();
 tPrevEkf = NaN;
 histA = nan(1, 8); histG = nan(1, 8);   % rolling stillness window (IMU ZUPT)
 stillCnt = 0;                            % UWB-only stillness (no-IMU tags)
@@ -106,6 +110,22 @@ while ishandle(fig)
             queried(end+1) = s.tag; %#ok<AGROW>
             ts.send(sprintf('GETMYDELAY,%d', s.tag));   % report NVS delay state
         end
+        % Stillness detection (drives range-hold trust and EKF stillMode)
+        if ~isempty(s.imu) && s.imu.status >= 1
+            histA = [histA(2:end), norm(s.imu.acc)];
+            histG = [histG(2:end), norm(s.imu.gyro)];
+            still = all(isfinite(histA)) && ...
+                    max(histA) < 0.12 && max(histG) < 0.05;
+        else
+            % No IMU: infer stillness from the filter (calm innovations +
+            % near-zero velocity for ~1.5 s; motion breaks it in a sweep).
+            still = stillCnt >= 10;
+        end
+
+        % Last-known-range hold: full anchor geometry across dropouts
+        nHeld = 0;
+        if opts.hold, [s, nHeld] = rh.apply(s, still); end
+
         [p, info] = dune.solveSweep(s, A, bias=B, rangeCorr=RC, ...
                                     tagZ=opts.tagZ, x0=prevPos, ...
                                     useGapWeights=opts.nlos);
@@ -117,20 +137,7 @@ while ishandle(fig)
             dt = 0;
             if isfinite(tPrevEkf), dt = min(max(s.thost - tPrevEkf, 0), 1); end
             tPrevEkf = s.thost;
-            % Stillness detection BEFORE predict: still -> ZUPT + frozen
-            % process noise, so the state can truly pin while parked.
-            if ~isempty(s.imu) && s.imu.status >= 1
-                histA = [histA(2:end), norm(s.imu.acc)];
-                histG = [histG(2:end), norm(s.imu.gyro)];
-                still = all(isfinite(histA)) && ...
-                        max(histA) < 0.12 && max(histG) < 0.05;
-            else
-                % No IMU on this tag: infer stillness from the filter itself
-                % (calm innovations + near-zero velocity for ~1.5 s; real
-                % motion breaks the condition within a sweep or two).
-                still = stillCnt >= 10;
-            end
-            ekf.stillMode = still;
+            ekf.stillMode = still;   % still -> ZUPT + frozen process noise
             ekf.predict(dt, []);
             if opts.mode == "ranges"
                 if ~ekf.initialized
@@ -192,10 +199,13 @@ while ishandle(fig)
             if numel(tRate) > 1, hz = (numel(tRate) - 1) / (tRate(end) - tRate(1)); end
             mode = '';
             if opts.ekf && all(isfinite(pe)), mode = ' EKF'; end
+            heldStr = '';
+            if nHeld > 0, heldStr = sprintf(' (%d held)', nHeld); end
             ttl.String = sprintf(['tag %d%s   (%.2f, %.2f) m   %.1f Hz   ' ...
-                                  '%d/%d anchors   resid %.0f mm   solved %d/%d'], ...
+                                  '%d/%d anchors%s   resid %.0f mm   solved %d/%d'], ...
                 s.tag, mode, disp_(1), disp_(2), hz, nnz(info.used), ...
-                nnz(~isnan(info.range)), 1000 * info.rmse, nSolved, nSweeps);
+                nnz(~isnan(info.range)), heldStr, 1000 * info.rmse, ...
+                nSolved, nSweeps);
         else
             ttl.String = sprintf('tag %d   NO FIX (%d anchors usable)   solved %d/%d', ...
                 s.tag, nnz(~isnan(info.range)), nSolved, nSweeps);

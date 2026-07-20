@@ -50,10 +50,14 @@ SENTINEL = -2147483648;   % DW1000 diagnostic-read error (seen on A3)
 M = numel(A.ids);
 range = nan(M,1); rx = nan(M,1); fp = nan(M,1);
 rejected = false(M,1);
+wScale = ones(M,1);           % dune.RangeHold weight for held entries
 
 for k = 1:numel(sweep.ids)
     c = find(A.ids == sweep.ids(k), 1);
     if isempty(c), continue; end          % anchor not in the layout
+    if isfield(sweep, 'wScale') && k <= numel(sweep.wScale)
+        wScale(c) = sweep.wScale(k);
+    end
     rx(c) = sweep.rx(k);
     fp(c) = sweep.fp(k);
     bad = sweep.rx(k) == SENTINEL || sweep.fp(k) == SENTINEL || ...
@@ -93,6 +97,7 @@ if opts.useGapWeights
 else
     w = ones(M,1);
 end
+w = w .* wScale;
 
 [pos, info] = dune.multilaterate(A.pos, corr, weights=w, tagZ=opts.tagZ, ...
                                  x0=opts.x0, gateK=opts.gateK);
