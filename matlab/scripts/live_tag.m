@@ -27,6 +27,9 @@ arguments
     port string = ""
     opts.bias (1,1) logical = false
     opts.powerCorr (1,1) logical = true   % DW1000 power-bias correction
+    opts.nlos (1,1) logical = true        % soft NLOS gap weights (false =
+                                          % rely on the MAD gate only; parked
+                                          % tests show equal/slightly better)
     opts.ekf (1,1) logical = true         % FusionEkf smoothing on the display
     opts.mode string = "pos"              % "pos" = fix updates (robust);
                                           % "ranges" = tightly-coupled with
@@ -104,7 +107,8 @@ while ishandle(fig)
             ts.send(sprintf('GETMYDELAY,%d', s.tag));   % report NVS delay state
         end
         [p, info] = dune.solveSweep(s, A, bias=B, rangeCorr=RC, ...
-                                    tagZ=opts.tagZ, x0=prevPos);
+                                    tagZ=opts.tagZ, x0=prevPos, ...
+                                    useGapWeights=opts.nlos);
         nRejected = nRejected + nnz(info.rejected);
 
         % EKF smoothing (CV predict + gated position update + windowed ZUPT)
