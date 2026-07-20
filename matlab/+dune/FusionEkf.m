@@ -1,19 +1,20 @@
 classdef FusionEkf < handle
-    %FUSIONEKF Loosely-coupled 2D UWB + IMU EKF (port of python fusion_ekf.py).
-    %   State x = [px py vx vy bx by]':
+    %FUSIONEKF Loosely/tightly-coupled 2D UWB + IMU EKF.
+    %   Base state x = [px py vx vy bax bay]':
     %     p - world position (m), v - world velocity (m/s),
-    %     b - horizontal accelerometer bias in world frame (m/s^2).
+    %     ba - horizontal accelerometer bias in world frame (m/s^2).
+    %   Optional (enableRangeBias): + one slowly-varying RANGE-BIAS state per
+    %   anchor. With tightly-coupled range updates these remember each
+    %   anchor's residual bias, so the position no longer jumps when the
+    %   answering anchor SUBSET changes (scheduler skips, dropouts) - the
+    %   common-mode bias stays in position (unobservable), but the
+    %   per-anchor differences are learned and held.
     %
-    %   Prediction: IMU-driven when world-frame linear acceleration is given
-    %   (BNO085 quaternion-rotated), constant-velocity fallback otherwise.
-    %   Updates: position fix (from dune.multilaterate, R from its covariance)
-    %   and ZUPT (zero-velocity pseudo-measurement), both chi-squared gated.
-    %
-    %   ekf = dune.FusionEkf();
-    %   ekf.predict(dt, aWorld);        % aWorld [] or [ax ay] m/s^2
-    %   ekf.updatePosition(pos, R);     % pos [1x2], R [2x2]
-    %   ekf.updateZupt();
-    %   ekf.pos, ekf.vel, ekf.bias
+    %   Prediction: IMU-driven when world-frame linear acceleration is given,
+    %   constant-velocity fallback otherwise. stillMode caps process noise so
+    %   a parked tag can truly pin.
+    %   Updates (all chi-squared gated): position fix, per-range
+    %   (tightly-coupled), ZUPT.
 
     properties
         sigmaAccel   = 0.35   % m/s^2, accel white noise (IMU-driven predict)
@@ -22,15 +23,17 @@ classdef FusionEkf < handle
         posSigma     = 0.08   % m, fallback position-measurement sigma
         zuptSigma    = 0.05   % m/s, ZUPT pseudo-measurement sigma
         maxConsecReject = 10  % reinit from the fix after this many rejections
-        stillMode = false     % set by the driver when stillness is detected:
-                              % caps process noise so the state can actually
-                              % pin (ZUPT alone clamps velocity, but the CV
-                              % Q keeps re-injecting position uncertainty)
+        stillMode = false     % driver-set stillness: caps process noise so
+                              % the state can pin (ZUPT alone clamps velocity
+                              % but CV Q keeps re-injecting position noise)
         sigmaAccelStill = 0.05
+        rbSigmaInit  = 0.05   % m, initial per-anchor range-bias uncertainty
+        rbSigmaRW    = 0.003  % m/sqrt(s), range-bias random walk
     end
     properties (SetAccess = private)
         x = zeros(6, 1)
         P = eye(6) * 1e4
+        nRb = 0               % number of range-bias states (0 = disabled)
         initialized = false
         lastNis = NaN
         lastAccepted = true
@@ -40,15 +43,31 @@ classdef FusionEkf < handle
     end
 
     methods
+        function enableRangeBias(obj, M)
+            % Add M per-anchor range-bias states (call before initialize;
+            % ranges passed to updateRanges must use this same order).
+            obj.nRb = M;
+            obj.x = zeros(6 + M, 1);
+            obj.P = eye(6 + M) * 1e4;
+            obj.initialized = false;
+        end
+
         function initialize(obj, pos)
-            obj.x = [pos(1); pos(2); 0; 0; 0; 0];
-            obj.P = diag([0.25, 0.25, 1.0, 1.0, 0.01, 0.01]);
+            n = 6 + obj.nRb;
+            obj.x = zeros(n, 1);
+            obj.x(1:2) = pos(:);
+            obj.P = zeros(n);
+            obj.P(1:6, 1:6) = diag([0.25, 0.25, 1.0, 1.0, 0.01, 0.01]);
+            if obj.nRb > 0
+                obj.P(7:end, 7:end) = eye(obj.nRb) * obj.rbSigmaInit^2;
+            end
             obj.initialized = true;
         end
 
         function p = pos(obj),  p = obj.x(1:2)'; end
         function v = vel(obj),  v = obj.x(3:4)'; end
         function b = bias(obj), b = obj.x(5:6)'; end
+        function b = rangeBias(obj), b = obj.x(7:end)'; end
 
         function predict(obj, dt, aWorld)
             % predict(dt) or predict(dt, [])  -> CV fallback
@@ -56,35 +75,40 @@ classdef FusionEkf < handle
             if ~obj.initialized || dt <= 0, return; end
             useImu = nargin >= 3 && numel(aWorld) == 2 && all(isfinite(aWorld));
 
+            n = 6 + obj.nRb;
             I2 = eye(2); Z2 = zeros(2);
+            F = eye(n);
             if useImu
-                % px' = px + vx dt + 1/2 (a - b) dt^2 ; vx' = vx + (a - b) dt
-                F = [I2, dt*I2, -0.5*dt^2*I2;
-                     Z2, I2,    -dt*I2;
-                     Z2, Z2,     I2];
+                % p' = p + v dt + 1/2 (a - ba) dt^2 ; v' = v + (a - ba) dt
+                F(1:6, 1:6) = [I2, dt*I2, -0.5*dt^2*I2;
+                               Z2, I2,    -dt*I2;
+                               Z2, Z2,     I2];
                 u = aWorld(:);
-                B = [0.5*dt^2*I2; dt*I2; Z2];
-                obj.x = F * obj.x + B * u;
+                obj.x(1:2) = obj.x(1:2) + obj.x(3:4)*dt ...
+                             + 0.5*(u - obj.x(5:6))*dt^2;
+                obj.x(3:4) = obj.x(3:4) + (u - obj.x(5:6))*dt;
                 sa = obj.sigmaAccel;
             else
-                F = [I2, dt*I2, Z2;
-                     Z2, I2,    Z2;
-                     Z2, Z2,    I2];
-                obj.x = F * obj.x;
+                F(1, 3) = dt; F(2, 4) = dt;
+                obj.x(1:2) = obj.x(1:2) + obj.x(3:4)*dt;
                 sa = obj.sigmaAccelCV;
             end
             if obj.stillMode, sa = min(sa, obj.sigmaAccelStill); end
-            % Bias states are unobservable without IMU accel input - freeze
-            % their random walk in CV mode so P(bias) cannot grow unbounded.
+            % Accel-bias states are unobservable without IMU input - freeze.
             if useImu, sb = obj.sigmaBiasRW; else, sb = 0; end
-            Q = [sa^2*(dt^3/3)*I2, sa^2*(dt^2/2)*I2, Z2;
-                 sa^2*(dt^2/2)*I2, sa^2*dt*I2,       Z2;
-                 Z2,               Z2,               sb^2*dt*I2];
+
+            Q = zeros(n);
+            Q(1:6, 1:6) = [sa^2*(dt^3/3)*I2, sa^2*(dt^2/2)*I2, Z2;
+                           sa^2*(dt^2/2)*I2, sa^2*dt*I2,       Z2;
+                           Z2,               Z2,               sb^2*dt*I2];
+            if obj.nRb > 0
+                Q(7:end, 7:end) = eye(obj.nRb) * obj.rbSigmaRW^2 * dt;
+            end
             obj.P = F * obj.P * F' + Q;
         end
 
         function ok = update(obj, z, H, R, zhat)
-            % Generic gated EKF update. Gate: chi2(dof, 0.95).
+            % Generic gated EKF update (Joseph form). Gate: chi2(dof, 0.95).
             % zhat: predicted measurement for nonlinear h(x); default H*x.
             CHI2_95 = [3.841, 5.991, 7.815];   % dof 1..3
             if nargin < 5, zhat = H * obj.x; end
@@ -100,44 +124,9 @@ classdef FusionEkf < handle
             end
             K = (obj.P * H') / S;
             obj.x = obj.x + K * y;
-            % Joseph form: valid for any (even suboptimal) gain, keeps P PSD.
-            IKH = eye(6) - K * H;
+            IKH = eye(numel(obj.x)) - K * H;
             obj.P = IKH * obj.P * IKH' + K * R * K';
             obj.P = (obj.P + obj.P') / 2;
-        end
-
-        function nAcc = updateRanges(obj, anchorPos, ranges, weights, tagZ, sigmaR)
-            % Tightly-coupled sequential range updates, chi2(1)-gated each.
-            % Rejects individual NLOS ranges instead of whole fixes, and
-            % still extracts information from sweeps with < 3 anchors.
-            %   anchorPos [Mx3], ranges [Mx1] (NaN = absent), weights [Mx1]
-            %   (NLOS soft weights -> R_i = sigmaR^2 / w_i), tagZ, sigmaR.
-            if nargin < 6, sigmaR = 0.05; end
-            if nargin < 5, tagZ = 0.24; end
-            if nargin < 4 || isempty(weights), weights = ones(size(ranges)); end
-            nAcc = 0;
-            if ~obj.initialized, return; end
-            for k = find(isfinite(ranges(:)') & weights(:)' > 0)
-                dx = obj.x(1) - anchorPos(k, 1);
-                dy = obj.x(2) - anchorPos(k, 2);
-                dz2 = (anchorPos(k, 3) - tagZ)^2;
-                pred = max(sqrt(dx^2 + dy^2 + dz2), 1e-6);
-                H = [dx / pred, dy / pred, 0, 0, 0, 0];
-                Rk = sigmaR^2 / weights(k);
-                nAcc = nAcc + obj.update(ranges(k), H, Rk, pred);
-            end
-            if nAcc > 0
-                obj.consecReject = 0;
-            else
-                obj.consecReject = obj.consecReject + 1;
-            end
-        end
-
-        function reinitFrom(obj, pos)
-            % Manual re-anchor (used by drivers when a reject streak persists).
-            obj.initialize(pos);
-            obj.nReinit = obj.nReinit + 1;
-            obj.consecReject = 0;
         end
 
         function ok = updatePosition(obj, pos, R)
@@ -149,7 +138,7 @@ classdef FusionEkf < handle
             if nargin < 3 || isempty(R) || any(~isfinite(R(:)))
                 R = eye(2) * obj.posSigma^2;
             end
-            H = [eye(2), zeros(2, 4)];
+            H = [eye(2), zeros(2, 4 + obj.nRb)];
             ok = obj.update(pos, H, R);
             % Divergence recovery: a healthy filter should not reject a long
             % streak of fixes. Re-anchor on the measurements when it does.
@@ -158,17 +147,62 @@ classdef FusionEkf < handle
             else
                 obj.consecReject = obj.consecReject + 1;
                 if obj.consecReject >= obj.maxConsecReject
-                    obj.initialize(pos);
-                    obj.nReinit = obj.nReinit + 1;
-                    obj.consecReject = 0;
+                    obj.reinitFrom(pos);
                 end
+            end
+        end
+
+        function nAcc = updateRanges(obj, anchorPos, ranges, weights, tagZ, sigmaR)
+            % Tightly-coupled sequential range updates, chi2(1)-gated each.
+            % With range-bias states enabled, measurement model is
+            %   z_k = ||p - a_k|| + b_k  -> per-anchor bias is learned while
+            % the anchor answers and REMEMBERED while it is skipped.
+            if nargin < 6, sigmaR = 0.05; end
+            if nargin < 5, tagZ = 0.24; end
+            if nargin < 4 || isempty(weights), weights = ones(size(ranges)); end
+            nAcc = 0;
+            if ~obj.initialized, return; end
+            n = 6 + obj.nRb;
+            for k = find(isfinite(ranges(:)') & weights(:)' > 0)
+                dx = obj.x(1) - anchorPos(k, 1);
+                dy = obj.x(2) - anchorPos(k, 2);
+                dz2 = (anchorPos(k, 3) - tagZ)^2;
+                pred = max(sqrt(dx^2 + dy^2 + dz2), 1e-6);
+                H = zeros(1, n);
+                H(1) = dx / pred;
+                H(2) = dy / pred;
+                zhat = pred;
+                if obj.nRb > 0 && k <= obj.nRb
+                    H(6 + k) = 1;
+                    zhat = pred + obj.x(6 + k);
+                end
+                Rk = sigmaR^2 / weights(k);
+                nAcc = nAcc + obj.update(ranges(k), H, Rk, zhat);
+            end
+            if nAcc > 0
+                obj.consecReject = 0;
+            else
+                obj.consecReject = obj.consecReject + 1;
             end
         end
 
         function ok = updateZupt(obj)
             if ~obj.initialized, ok = false; return; end
-            H = [zeros(2), eye(2), zeros(2)];
+            H = [zeros(2), eye(2), zeros(2, 2 + obj.nRb)];
             ok = obj.update([0; 0], H, eye(2) * obj.zuptSigma^2);
+        end
+
+        function reinitFrom(obj, pos)
+            % Re-anchor pose but KEEP learned range biases (their memory is
+            % the whole point); only their uncertainty is moderately reopened.
+            rb = obj.x(7:end);
+            obj.initialize(pos);
+            if obj.nRb > 0
+                obj.x(7:end) = rb;
+                obj.P(7:end, 7:end) = eye(obj.nRb) * (obj.rbSigmaInit / 2)^2;
+            end
+            obj.nReinit = obj.nReinit + 1;
+            obj.consecReject = 0;
         end
     end
 
@@ -180,9 +214,9 @@ classdef FusionEkf < handle
             aW = [];
             if numel(quat) ~= 4 || numel(acc) ~= 3, return; end
             if any(~isfinite(quat)) || any(~isfinite(acc)), return; end
-            n = norm(quat);
-            if n < 0.5, return; end
-            q = quat(:)' / n;
+            nq = norm(quat);
+            if nq < 0.5, return; end
+            q = quat(:)' / nq;
             w = q(1); xq = q(2); yq = q(3); zq = q(4);
             Rq = [1-2*(yq^2+zq^2),   2*(xq*yq - zq*w), 2*(xq*zq + yq*w);
                   2*(xq*yq + zq*w), 1-2*(xq^2+zq^2),   2*(yq*zq - xq*w);

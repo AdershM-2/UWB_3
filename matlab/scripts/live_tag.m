@@ -28,6 +28,12 @@ arguments
     opts.bias (1,1) logical = false
     opts.powerCorr (1,1) logical = true   % DW1000 power-bias correction
     opts.ekf (1,1) logical = true         % FusionEkf smoothing on the display
+    opts.mode string = "pos"              % "pos" = fix updates (robust);
+                                          % "ranges" = tightly-coupled with
+                                          % per-anchor bias MEMORY: no position
+                                          % jump when the anchor subset changes
+                                          % (dropouts/skips). Best while parked
+                                          % or slow; may lag when carried fast.
     opts.tagZ (1,1) double = 0.24         % tag antenna height (matches truth clicks)
     opts.trail (1,1) double = 300
     opts.margin (1,1) double = 2.0   % plot margin around the anchors (m)
@@ -78,9 +84,13 @@ tRate = [];
 nSweeps = 0; nSolved = 0; nRejected = 0;
 queried = [];
 ekf = dune.FusionEkf();
+if opts.mode == "ranges"
+    ekf.enableRangeBias(numel(A.ids));   % per-anchor bias memory
+end
 tPrevEkf = NaN;
 histA = nan(1, 8); histG = nan(1, 8);   % rolling stillness window (IMU ZUPT)
 stillCnt = 0;                            % UWB-only stillness (no-IMU tags)
+divergeStreak = 0;
 
 while ishandle(fig)
     for e = ts.drainEvents()
@@ -118,7 +128,26 @@ while ishandle(fig)
             end
             ekf.stillMode = still;
             ekf.predict(dt, []);
-            if all(isfinite(p))
+            if opts.mode == "ranges"
+                if ~ekf.initialized
+                    if all(isfinite(p)), ekf.updatePosition(p); end
+                else
+                    ekf.updateRanges(A.pos, info.rangeCorr, info.w, ...
+                                     opts.tagZ, 0.05);
+                    solid = all(isfinite(p)) && nnz(info.used) >= 4 ...
+                            && info.rmse < 0.10;
+                    if solid && norm(ekf.pos - p) > 0.5
+                        divergeStreak = divergeStreak + 1;
+                    elseif solid
+                        divergeStreak = 0;
+                    end
+                    if (ekf.consecReject >= ekf.maxConsecReject ...
+                            || divergeStreak >= 5) && all(isfinite(p))
+                        ekf.reinitFrom(p);
+                        divergeStreak = 0;
+                    end
+                end
+            elseif all(isfinite(p))
                 ekf.updatePosition(p, adaptiveR(info, ekf.posSigma));
                 if ekf.consecReject >= ekf.maxConsecReject
                     ekf.reinitFrom(p);

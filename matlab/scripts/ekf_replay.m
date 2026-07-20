@@ -72,6 +72,9 @@ if ~opts.quiet, fprintf('%d sweeps (tag %d) from %s\n', N, opts.tagId, src); end
 ekf = dune.FusionEkf();
 if ~isempty(opts.sigmaAccelCV), ekf.sigmaAccelCV = opts.sigmaAccelCV; end
 if ~isempty(opts.sigmaAccel),   ekf.sigmaAccel = opts.sigmaAccel; end
+if opts.mode == "ranges"
+    ekf.enableRangeBias(numel(A.ids));   % per-anchor bias memory
+end
 
 Praw = nan(N, 2); Pekf = nan(N, 2); thost = nan(N, 1);
 imuMode = false(N, 1); zupt = false(N, 1); accepted = true(N, 1);
