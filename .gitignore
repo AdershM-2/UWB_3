@@ -27,3 +27,8 @@ Thumbs.db
 desktop.ini
 .DS_Store
 *.swp
+
+# -- Session data (replayable logs + generated reports, not source) ----------
+matlab/logs/
+matlab/results/
+matlab/config/anchors.json.bak_*
