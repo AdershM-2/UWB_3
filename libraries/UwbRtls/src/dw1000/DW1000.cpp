@@ -943,6 +943,14 @@ void DW1000Class::getTempAndVbat(float& temp, float& vbat) {
 	temp = (sar_ltemp - _tmeas23C) * 1.14f + 23.0f;
 }
 
+int32_t DW1000Class::getCarrierIntegrator() {
+	byte buf[LEN_DRX_CARRIER_INT];
+	readBytes(DRX_TUNE, DRX_CARRIER_INT_SUB, buf, LEN_DRX_CARRIER_INT);
+	int32_t v = ((int32_t)buf[2] << 16) | ((int32_t)buf[1] << 8) | (int32_t)buf[0];
+	if(v & 0x100000) v |= 0xFFE00000;   // sign-extend the 21-bit value
+	return v;
+}
+
 void DW1000Class::setEUI(char eui[]) {
 	byte eui_byte[LEN_EUI];
 	convertToByte(eui, eui_byte);

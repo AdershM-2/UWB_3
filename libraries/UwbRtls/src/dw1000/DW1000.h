@@ -358,6 +358,11 @@ public:
 	
 	// host-initiated reading of temperature and battery voltage
 	static void getTempAndVbat(float& temp, float& vbat);
+
+	// carrier recovery integrator of the last received frame (signed 21-bit,
+	// raw units; measures the remote TX carrier offset vs our crystal). Read
+	// before the receiver is re-armed - a new frame overwrites it.
+	static int32_t getCarrierIntegrator();
 	
 	// transmission/reception bit rate
 	static constexpr byte TRX_RATE_110KBPS  = 0x00;

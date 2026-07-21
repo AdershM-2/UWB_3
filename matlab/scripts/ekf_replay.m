@@ -29,6 +29,10 @@ arguments
                                            % advantage, and stricter ZUPT first)
     opts.sigmaR (1,1) double = 0.05        % per-range meas sigma (ranges mode)
     opts.robust (1,1) logical = true       % Huber down-weighting vs hard gate
+    opts.stillInvert (1,1) logical = false % Phase-A3: while still, position Q ~0
+                                           % + per-anchor bias RW opened (ranges
+                                           % mode only) so breathing is absorbed
+                                           % into the bias states
     opts.spotsJson string = ""
     opts.settleS (1,1) double = 2
     opts.sigmaAccelCV double = []      % override FusionEkf defaults if set
@@ -82,6 +86,7 @@ Praw = nan(N, 2); Pekf = nan(N, 2); thost = nan(N, 1);
 imuMode = false(N, 1); zupt = false(N, 1); accepted = true(N, 1);
 prevRaw = [];
 tPrev = NaN;
+stillT0 = NaN;
 divergeStreak = 0;
 histA = nan(1, 8); histG = nan(1, 8);   % rolling |acc| / |gyro| for stillness
 for i = 1:N
@@ -105,6 +110,17 @@ for i = 1:N
     end
     imuMode(i) = ~isempty(aW);
     ekf.stillMode = still;      % still -> ZUPT + frozen process noise
+    % Phase-A3 inversion engages only after 3 s of continuous stillness: the
+    % filter must have converged onto the parked position BEFORE the freeze,
+    % otherwise the initial position error is absorbed into the bias states
+    % (position/bias common null space) and never corrects.
+    if still
+        if ~isfinite(stillT0), stillT0 = s.thost; end
+    else
+        stillT0 = NaN;
+    end
+    ekf.stillInvert = opts.stillInvert && isfinite(stillT0) ...
+                      && s.thost - stillT0 > 3;
     ekf.predict(dt, aW);
 
     [p, info] = dune.solveSweep(s, A, rangeCorr=RC, tagZ=opts.tagZ, x0=prevRaw);
@@ -178,12 +194,15 @@ nS = numel(sp);
 allRaw = []; allEkf = [];
 if ~opts.quiet
     fprintf('\nStatic-spot eval (settle %.0f s dropped per dwell):\n', opts.settleS);
-    fprintf('  spot    n    raw RMSE   EKF RMSE   EKF median   EKF p95 (mm)\n');
+    fprintf('  spot    n    raw RMSE   EKF RMSE   EKF median   EKF p95 (mm)   wander raw->EKF (mm)\n');
 end
 perSpot = nan(nS, 2);
+perWander = nan(nS, 2);
 for j = 1:nS
     t = sp(j).truth(:)';
-    m = find(~isnan(Praw(:, 1)) & vecnorm(Praw - sp(j).medPos(:)', 2, 2) < 0.15)';
+    % cluster on TRUTH: spots.json medPos are pre-correction raw-solve medians
+    % (up to 0.33 m of bias-field offset); corrected solves land near truth
+    m = find(~isnan(Praw(:, 1)) & vecnorm(Praw - t, 2, 2) < 0.20)';
     if isempty(m), continue; end
     % contiguous dwells; drop the first settleS of each
     keepIdx = [];
@@ -200,20 +219,37 @@ for j = 1:nS
     ee = vecnorm(Pekf(keepIdx, :) - t, 2, 2);
     ee = ee(~isnan(ee));
     perSpot(j, :) = 1000 * [sqrt(mean(er.^2)), sqrt(mean(ee.^2))];
+    % Wander = slow drift of the 2 s-median position within the dwell (the
+    % breathing metric; RMSE alone cannot separate offset from wander).
+    perWander(j, 1) = wanderMm(Praw(keepIdx, :));
+    perWander(j, 2) = wanderMm(Pekf(keepIdx, :));
     if ~opts.quiet
-        fprintf('  S%-3d %5d   %7.0f    %7.0f     %7.0f    %7.0f\n', sp(j).k, ...
-            numel(keepIdx), perSpot(j, 1), perSpot(j, 2), ...
-            1000 * median(ee), 1000 * prctile(ee, 95));
+        fprintf('  S%-3d %5d   %7.0f    %7.0f     %7.0f    %7.0f      %5.0f -> %5.0f\n', ...
+            sp(j).k, numel(keepIdx), perSpot(j, 1), perSpot(j, 2), ...
+            1000 * median(ee), 1000 * prctile(ee, 95), ...
+            perWander(j, 1), perWander(j, 2));
     end
     allRaw = [allRaw; er]; allEkf = [allEkf; ee]; %#ok<AGROW>
 end
 out.spotRmse = perSpot;
+out.spotWander = perWander;
 out.overall = 1000 * [sqrt(mean(allRaw.^2)), sqrt(mean(allEkf.^2))];
+out.wander = median(perWander, 1, 'omitnan');
 if ~opts.quiet
     fprintf('  OVERALL: raw RMSE %4.0f -> EKF RMSE %4.0f mm   (median %4.0f -> %4.0f, p95 %4.0f -> %4.0f)\n', ...
         out.overall(1), out.overall(2), 1000 * median(allRaw), 1000 * median(allEkf), ...
         1000 * prctile(allRaw, 95), 1000 * prctile(allEkf, 95));
+    fprintf('  WANDER (median over spots, max drift of 2 s-median pos): raw %.0f -> EKF %.0f mm\n', ...
+        out.wander(1), out.wander(2));
 end
+end
+
+function w = wanderMm(P)
+% Max drift of the 2 s-median position within a dwell (breathing metric).
+P = P(isfinite(P(:, 1)), :);
+if size(P, 1) < 20, w = NaN; return; end
+Pm = movmedian(P, 11, 1);
+w = 1000 * max(vecnorm(Pm - median(Pm, 1), 2, 2));
 end
 
 %% ── helpers ────────────────────────────────────────────────────────────────

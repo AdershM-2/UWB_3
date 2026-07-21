@@ -12,11 +12,18 @@
  * so the sketch's flag actually controls which transport is built.
  *
  * Wire format (versioned ASCII line, trivial bandwidth, easy parse):
- *   RTLS,v3,<t_ms>,<tag_id>,<n>,<id1>,<d1_mm>,<rx1_dbm>,<fp1_dbm>,<q1>,...\n
+ *   RTLS,v4,<t_ms>,<tag_id>,<n>,
+ *        <id1>,<d1_mm>,<rx1_dbm>,<fp1_dbm>,<q1>,<cfo1>,<tex1>,...\n
+ *        [,DIAG,<dieTempC>,<vbatV>]
  *        [,IMU,<status>,<qw>,<qx>,<qy>,<qz>,<ax>,<ay>,<az>,<gx>,<gy>,<gz>]
- *   - v3 adds BNO085 accuracy status byte and gyroscope (gx,gy,gz) to IMU tail.
- *   - v2 (7-field IMU tail) is still accepted by the Python parser (backward compat).
- *   - v1 (3 fields/anchor) is accepted by the Python FrameParser for compatibility.
+ *   - v4 (Phase-C wobble diagnostics) appends per anchor: cfo = raw DW1000
+ *     carrier integrator of the RANGE_REPORT RX (signed; per-anchor CFO vs
+ *     the tag crystal), tex = realised exchange start in ms from sweep start
+ *     (realised cadence). DIAG tail = tag DW1000 die temperature + Vbat via
+ *     SAR ADC, present when the sketch supplies them.
+ *   - v3 (5 fields/anchor, no DIAG) is what the MATLAB parser accepted before;
+ *     it still parses both.
+ *   - v2 (7-field IMU tail) / v1 (3 fields/anchor) were Python-parser era.
  *   - The IMU,... tail is appended only when an IMU sample is present.
  */
 #ifndef UWBRTLS_HOSTLINK_H
@@ -99,11 +106,13 @@ public:
     Serial.write(line, len);
   }
 
-  // Format and send one sweep. imu may be nullptr (or invalid) to omit IMU data.
+  // Format and send one sweep. imu may be nullptr (or invalid) to omit IMU
+  // data; dieTempC/vbatV NAN to omit the DIAG tail.
   void sendSweep(uint32_t tMs, uint8_t tagId, const UwbScheduler& sched,
-                 const ImuSample* imu = nullptr) {
+                 const ImuSample* imu = nullptr,
+                 float dieTempC = NAN, float vbatV = NAN) {
     char buf[768];
-    int len = format(buf, sizeof(buf), tMs, tagId, sched, imu);
+    int len = format(buf, sizeof(buf), tMs, tagId, sched, imu, dieTempC, vbatV);
     if (len <= 0) return;
 
 #if defined(UWB_HOSTLINK_UDP)
@@ -129,13 +138,14 @@ public:
 private:
   // Build the line into buf; returns number of bytes written (incl. '\n').
   static int format(char* buf, size_t size, uint32_t tMs, uint8_t tagId,
-                    const UwbScheduler& sched, const ImuSample* imu) {
+                    const UwbScheduler& sched, const ImuSample* imu,
+                    float dieTempC, float vbatV) {
     // Count valid measurements first.
     uint8_t nValid = 0;
     for (uint8_t i = 0; i < sched.anchorCount(); i++)
       if (sched.result(i).valid) nValid++;
 
-    int p = snprintf(buf, size, "RTLS,v3,%lu,%u,%u",
+    int p = snprintf(buf, size, "RTLS,v4,%lu,%u,%u",
                      (unsigned long)tMs, (unsigned)tagId, (unsigned)nValid);
     if (p < 0 || (size_t)p >= size) return -1;
 
@@ -144,8 +154,15 @@ private:
       if (!r.valid) continue;
       long  mm = lround(r.distance * 1000.0f);
       int   q  = (int)lround(r.rxPower);
-      int w = snprintf(buf + p, size - p, ",%u,%ld,%d,%.1f,%.2f",
-                       (unsigned)r.id, mm, q, r.fpPower, r.quality);
+      int w = snprintf(buf + p, size - p, ",%u,%ld,%d,%.1f,%.2f,%ld,%u",
+                       (unsigned)r.id, mm, q, r.fpPower, r.quality,
+                       (long)r.carrierInt, (unsigned)r.tExchMs);
+      if (w < 0 || (size_t)(p + w) >= size) return -1;
+      p += w;
+    }
+
+    if (!isnan(dieTempC) && !isnan(vbatV)) {
+      int w = snprintf(buf + p, size - p, ",DIAG,%.1f,%.2f", dieTempC, vbatV);
       if (w < 0 || (size_t)(p + w) >= size) return -1;
       p += w;
     }

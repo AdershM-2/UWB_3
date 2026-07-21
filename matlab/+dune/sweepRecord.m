@@ -28,15 +28,25 @@ end
 rec.nUsed = nnz(info.used);
 if isfinite(info.rmse), rec.rmse = round(info.rmse, 4); end
 
+% Phase-C tag diagnostics (RTLS v4): die temperature / battery voltage
+if isfield(s, 'tempC') && isfinite(s.tempC), rec.tempC = s.tempC; end
+if isfield(s, 'vbat')  && isfinite(s.vbat),  rec.vbat  = s.vbat;  end
+
 haveDiag = find(isfinite(info.range) | info.rejected)';
 if ~isempty(haveDiag)
     diag = struct('id', {}, 'rx', {}, 'fp', {}, 'gap', {}, 'w', {}, ...
-                  'used', {}, 'rejected', {});
+                  'used', {}, 'rejected', {}, 'cfo', {}, 'tex', {});
     for c = haveDiag
+        % per-anchor CFO (ppm) / realised exchange time (ms) from RTLS v4
+        cfo = NaN; tex = NaN;
+        k = find(s.ids == A.ids(c), 1);
+        if ~isempty(k) && isfield(s, 'cfoPpm')
+            cfo = round(s.cfoPpm(k), 3); tex = s.tex(k);
+        end
         diag(end+1) = struct('id', A.ids(c), 'rx', info.rx(c), ...
             'fp', info.fp(c), 'gap', round(info.gap(c), 2), ...
             'w', round(info.w(c), 3), 'used', info.used(c), ...
-            'rejected', info.rejected(c)); %#ok<AGROW>
+            'rejected', info.rejected(c), 'cfo', cfo, 'tex', tex); %#ok<AGROW>
     end
     rec.anchor_diag = diag;
 end

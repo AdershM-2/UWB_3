@@ -29,6 +29,14 @@ classdef FusionEkf < handle
         sigmaAccelStill = 0.05
         rbSigmaInit  = 0.05   % m, initial per-anchor range-bias uncertainty
         rbSigmaRW    = 0.003  % m/sqrt(s), range-bias random walk
+        stillInvert = false   % Phase-A3 noise-budget inversion: while STILL,
+                              % the position is known constant but the ranges
+                              % keep breathing, so invert the budget - position
+                              % Q ~ 0 and the per-anchor bias RW opened - and
+                              % the breathing is absorbed into the bias states
+                              % instead of dragging the position.
+        sigmaAccelStillInv = 0.005  % m/s^2, position Q when still+inverted
+        rbSigmaRWStill     = 0.02   % m/sqrt(s), opened bias RW when still+inverted
         robust = true         % Huber-style M-estimation (Bitcraze-proven):
                               % marginal outliers are DOWN-WEIGHTED (R inflated
                               % so the effective NIS sits at the gate) instead
@@ -100,7 +108,15 @@ classdef FusionEkf < handle
                 obj.x(1:2) = obj.x(1:2) + obj.x(3:4)*dt;
                 sa = obj.sigmaAccelCV;
             end
-            if obj.stillMode, sa = min(sa, obj.sigmaAccelStill); end
+            rbRW = obj.rbSigmaRW;
+            if obj.stillMode
+                if obj.stillInvert && obj.nRb > 0
+                    sa = min(sa, obj.sigmaAccelStillInv);
+                    rbRW = obj.rbSigmaRWStill;
+                else
+                    sa = min(sa, obj.sigmaAccelStill);
+                end
+            end
             % Accel-bias states are unobservable without IMU input - freeze.
             if useImu, sb = obj.sigmaBiasRW; else, sb = 0; end
 
@@ -109,7 +125,7 @@ classdef FusionEkf < handle
                            sa^2*(dt^2/2)*I2, sa^2*dt*I2,       Z2;
                            Z2,               Z2,               sb^2*dt*I2];
             if obj.nRb > 0
-                Q(7:end, 7:end) = eye(obj.nRb) * obj.rbSigmaRW^2 * dt;
+                Q(7:end, 7:end) = eye(obj.nRb) * rbRW^2 * dt;
             end
             obj.P = F * obj.P * F' + Q;
         end

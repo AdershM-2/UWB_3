@@ -24,18 +24,24 @@ measured range depends on exchange cadence/receiver state, and production cadenc
 Formula audit DONE: TwrEngine uses the Neirynck product form (not symmetric averaging), so
 CFO×asymmetry is excluded at first order.
 
-- **Phase A — offline forensics on existing logs** (no hardware):
-  A1 per-anchor realised inter-exchange gap ↔ range-residual correlation;
-  A2 range-space breathing decomposition (cross-anchor residual correlation per dwell:
-     common-mode ⇒ tag-side, independent ⇒ anchor/link);
-  A3 estimator retune: stillMode inverts the noise budget (position Q → ~0, per-anchor
-     bias RW opened) so breathing is absorbed into bias states.
-- **Phase B — CIR snapshots** (tag-240 reflash staged, idle()-fix committed 1c10187):
+- **Phase A — offline forensics** ✅ DONE 2026-07-21 (docs/phase_a_findings.md,
+  tooling matlab/scripts/phase_a_forensics.m):
+  A1 cadence hypothesis REJECTED as breathing driver (gap↔residual |ρ| ≤ 0.06;
+     real ±5–7 mm receiver-idle micro-effect confirmed, anchor-dependent sign);
+  A2 breathing is PER-ANCHOR INDEPENDENT (off-diag corr +0.05) ⇒ link/anchor-side,
+     NOT tag-side common-mode — kills tag clock/temp for the dominant component;
+  A3 stillMode noise-budget inversion NEGATIVE (spot-specific residuals poison the
+     bias memory across dwells; RMSE 91→319 mm) — FusionEkf.stillInvert kept
+     default-off; estimator floor confirmed.
+- **Phase B — CIR snapshots** ◀ NEXT (tag-240 reflash staged, idle()-fix 1c10187):
   quiet dwell / walking dwell / far anchor. Fork: leading edge breathes with residual
-  (channel/LDE cause) vs edge frozen while range wanders (clock/timing/cadence cause).
-- **Phase C — free observables** (tag-only firmware + parser): DW1000 die temperature,
-  Vbat (SAR ADC), per-anchor CFO (carrier integrator), realised cadence per sweep →
+  (channel/LDE cause — A2 predicts this) vs edge frozen while range wanders
+  (clock/timing/cadence cause).
+- **Phase C — free observables** — firmware STAGED for review (RTLS v4: per-anchor
+  CFO raw carrier integrator + realised exchange-start ms; DIAG tail with DW1000 die
+  temp + Vbat per sweep; parser + JSONL logging done; tag-only, anchors untouched) →
   locked-room long dwell (Kinect timestamps intrusions) → correlate vs residuals.
+  Role after A2: cheap close-out of tag-side hypotheses + per-anchor drift watch.
 - **Phase D — isolation experiments** (by cost):
   D1 metronomic TDMA dwell (tag-only: fixed-period sweep, no skip-backoff, dummy
      exchanges) → cadence in/out;

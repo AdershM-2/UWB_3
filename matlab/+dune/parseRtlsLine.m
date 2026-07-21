@@ -1,26 +1,49 @@
 function s = parseRtlsLine(line)
-%PARSERTLSLINE Parse one live "RTLS,v3" ASCII line from the tag firmware.
+%PARSERTLSLINE Parse one live "RTLS" ASCII line from the tag firmware.
 %   s = dune.parseRtlsLine(line)
 %
-%   Format (HostLink.h):
-%     RTLS,v3,<t_ms>,<tag_id>,<n>,{<id>,<d_mm>,<rx_dbm>,<fp_dbm>,<q>}*n
-%          [,IMU,<status>,<qw>,<qx>,<qy>,<qz>,<ax>,<ay>,<az>,<gx>,<gy>,<gz>]
+%   Formats (HostLink.h):
+%     v3: RTLS,v3,<t_ms>,<tag_id>,<n>,{<id>,<d_mm>,<rx_dbm>,<fp_dbm>,<q>}*n
+%     v4: RTLS,v4,<t_ms>,<tag_id>,<n>,{...v3 fields...,<cfo>,<tex>}*n
+%             [,DIAG,<dieTempC>,<vbatV>]
+%     both: [,IMU,<status>,<qw>,<qx>,<qy>,<qz>,<ax>,<ay>,<az>,<gx>,<gy>,<gz>]
+%
+%   v4 (Phase-C wobble diagnostics) per anchor: cfo = raw DW1000 carrier
+%   integrator of the RANGE_REPORT RX, tex = realised exchange start (ms from
+%   sweep start). DIAG = tag DW1000 die temperature (C) + Vbat (V).
 %
 %   Returns [] for non-RTLS lines (survey/calibration chatter). Output:
 %     s.tms, s.tag, s.ids [n], s.dist [n] (m), s.rx, s.fp, s.qual
+%     s.cfoPpm [n]  per-anchor carrier offset in ppm (NaN on v3)
+%     s.tex [n]     realised exchange start ms (NaN on v3)
+%     s.tempC, s.vbat   tag die temperature / battery (NaN when absent)
 %     s.imu = [] or struct(status, quat[4], acc[3], gyro[3])
+
+% Raw carrier integrator -> ppm (Decawave constants, 110 kbps mode, channel 5:
+% Fs/2 correction 998.4e6/2/8192/131072 Hz per LSB, carrier 6489.6 MHz; the
+% negative sign follows dwt_readcarrierintegrator's convention: positive ppm =
+% remote (anchor) crystal runs faster than ours).
+CFO_PPM_PER_LSB = (998.4e6/2/8192/131072) * (-1e6/6489.6e6);
 
 s = [];
 line = strtrim(line);
 if ~startsWith(line, "RTLS,"), return; end
 tok = split(string(line), ',');
-if numel(tok) < 5 || tok(2) ~= "v3", return; end
+if numel(tok) < 5, return; end
+if tok(2) == "v3"
+    stride = 5;
+elseif tok(2) == "v4"
+    stride = 7;
+else
+    return;
+end
 
 s.tms = double(tok(3));
 s.tag = double(tok(4));
 n     = double(tok(5));
 s.ids = nan(1,n); s.dist = nan(1,n); s.rx = nan(1,n);
 s.fp  = nan(1,n); s.qual = nan(1,n);
+s.cfoPpm = nan(1,n); s.tex = nan(1,n);
 p = 6;
 for k = 1:n
     s.ids(k)  = double(tok(p));
@@ -28,7 +51,18 @@ for k = 1:n
     s.rx(k)   = double(tok(p+2));
     s.fp(k)   = double(tok(p+3));
     s.qual(k) = double(tok(p+4));
-    p = p + 5;
+    if stride == 7
+        s.cfoPpm(k) = double(tok(p+5)) * CFO_PPM_PER_LSB;
+        s.tex(k)    = double(tok(p+6));
+    end
+    p = p + stride;
+end
+
+s.tempC = NaN; s.vbat = NaN;
+if p <= numel(tok) && tok(p) == "DIAG" && numel(tok) >= p + 2
+    s.tempC = double(tok(p+1));
+    s.vbat  = double(tok(p+2));
+    p = p + 3;
 end
 
 s.imu = [];

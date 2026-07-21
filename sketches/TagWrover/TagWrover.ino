@@ -631,8 +631,13 @@ void loop() {
 
   // ── Send RTLS packet to host (IMU tail appended when valid) ───────────────
   if (myTurn) {
+    // Phase-C wobble diagnostics: DW1000 die temperature + Vbat once per
+    // sweep (SAR ADC; engine idles the radio for the read, then re-arms).
+    float dieTempC = NAN, vbatV = NAN;
+    engine.readTempVbat(dieTempC, vbatV);
     host.sendSweep(millis(), TAG_ID, scheduler,
-                   (imuPresent && imuData.valid) ? &imuSamp : nullptr);
+                   (imuPresent && imuData.valid) ? &imuSamp : nullptr,
+                   dieTempC, vbatV);
     ring.handoff();
   }
 

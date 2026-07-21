@@ -204,6 +204,10 @@
 #define LEN_DRX_TUNE1b 2
 #define LEN_DRX_TUNE2 4
 #define LEN_DRX_TUNE4H 2
+// Carrier recovery integrator (RX carrier frequency offset vs local xtal,
+// signed 21-bit; valid for the most recently received frame)
+#define DRX_CARRIER_INT_SUB 0x28
+#define LEN_DRX_CARRIER_INT 3
 
 // LDE_CFG1 (for re-tuning only)
 #define LDE_IF 0x2E

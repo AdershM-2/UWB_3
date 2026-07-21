@@ -16,8 +16,10 @@ void UwbScheduler::begin(TwrEngine* engine, const uint8_t* anchorAddrs, uint8_t 
 uint8_t UwbScheduler::sweep() {
   uint8_t good = 0;
   _sweepSeq++;
+  const uint32_t t0 = millis();   // Phase-C: realised per-slot cadence
   for (uint8_t i = 0; i < _n; i++) {
     _results[i].id = _addrs[i];
+    _results[i].tExchMs = (uint16_t)(millis() - t0);
 
     // Dead-anchor backoff: skip this slot and count down.
     if (_skipSweeps[i] > 0) {
@@ -27,6 +29,7 @@ uint8_t UwbScheduler::sweep() {
       _results[i].rxPower  = 0.0f;
       _results[i].fpPower  = 0.0f;
       _results[i].quality  = 0.0f;
+      _results[i].carrierInt = 0;
       continue;
     }
 
@@ -37,6 +40,7 @@ uint8_t UwbScheduler::sweep() {
     _results[i].rxPower  = ok ? rxp  : 0.0f;
     _results[i].fpPower  = ok ? _engine->fpPower() : 0.0f;
     _results[i].quality  = ok ? _engine->quality()  : 0.0f;
+    _results[i].carrierInt = ok ? _engine->carrierInt() : 0;
 
     if (ok) {
       if (_failStreak[i] > 0) {

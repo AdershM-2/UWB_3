@@ -26,6 +26,9 @@ struct RangeResult {
   float   rxPower  = 0.0f;    // dBm
   float   fpPower  = 0.0f;    // first-path power, dBm
   float   quality  = 0.0f;    // receive quality (FP amplitude / noise estimate)
+  // Phase-C wobble diagnostics:
+  int32_t  carrierInt = 0;    // raw carrier integrator (per-anchor CFO vs tag xtal)
+  uint16_t tExchMs    = 0;    // realised exchange start, ms from sweep start
 };
 
 class UwbScheduler {

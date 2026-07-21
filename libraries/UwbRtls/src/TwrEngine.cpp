@@ -156,9 +156,20 @@ bool TwrEngine::rangeTo(uint8_t anchorAddr, float& distanceMeters, float& rxPowe
   rxPowerDbm = DW1000.getReceivePower();
   _fpPower   = DW1000.getFirstPathPower();
   _quality   = DW1000.getReceiveQuality();
+  _carrierInt = DW1000.getCarrierIntegrator();
   _failStreak = 0;
   startRx();
   return true;
+}
+
+// Phase-C diagnostics: DW1000 die temperature + Vbat via the SAR ADC. The
+// manual's 6.4 sequence pokes RF_CONF/TX_CAL, so the transceiver must be
+// idle (same lesson as the CIR capture: never touch analog state with the
+// receiver hunting). Cost is a handful of SPI ops - fine once per sweep.
+void TwrEngine::readTempVbat(float& tempC, float& vbat) {
+  DW1000.idle();
+  DW1000.getTempAndVbat(tempC, vbat);
+  startRx();
 }
 
 // ===========================================================================

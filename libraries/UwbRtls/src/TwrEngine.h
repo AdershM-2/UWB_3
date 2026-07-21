@@ -94,6 +94,15 @@ public:
   float fpPower() const { return _fpPower; }
   float quality() const { return _quality; }
 
+  // Carrier integrator of the last rangeTo() RANGE_REPORT frame (raw signed
+  // 21-bit): per-anchor carrier frequency offset vs our crystal. Phase-C
+  // wobble diagnostics - tracks relative clock/temperature drift per link.
+  int32_t carrierInt() const { return _carrierInt; }
+
+  // DW1000 die temperature (deg C) and battery voltage via the SAR ADC.
+  // Forces the transceiver idle for the SAR sequence, then re-arms RX.
+  void readTempVbat(float& tempC, float& vbat);
+
   // Antenna delay push (calibration): returns true once after serviceResponder()
   // applies a MSG_ANT_DELAY command. Sketch uses this to persist the value to NVS.
   bool antDelayWasUpdated() { bool v = _antDelayUpdated; _antDelayUpdated = false; return v; }
@@ -127,6 +136,7 @@ private:
 
   float   _fpPower  = 0.0f;    // first-path power from last rangeTo() (tag RX side)
   float   _quality  = 0.0f;    // receive quality from last rangeTo()
+  int32_t _carrierInt = 0;     // carrier integrator from last rangeTo() (raw)
 
   bool    _antDelayUpdated = false;  // set when MSG_ANT_DELAY applied; cleared by antDelayWasUpdated()
 
