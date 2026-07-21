@@ -196,7 +196,9 @@ better ranges.
   tag (DTR) → boot banner shows each connect's delay source.
 - Firmware changes need discussion before reflash; keep libraries/UwbRtls synced with the
   Arduino-path copy on EVERY library change.
-- Transport: serial/COM only (UDP blocked on iitk WiFi).
+- Transport: serial/COM (single tag) OR WiFi/UDP (dune.TagUdp, both tags at
+  once). UDP VERIFIED working on the current network 2026-07-21 (the old iitk
+  broadcast block did not bite; no firmware change / hotspot needed).
 - Radio: MODE_LONGDATA_RANGE_ACCURACY (110 kb/s, PRF 64, long preamble), CHANNEL_5.
   Driver applies the APS011 power-bias table on every RX timestamp (always on).
 
