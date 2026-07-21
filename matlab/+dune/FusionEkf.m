@@ -29,6 +29,12 @@ classdef FusionEkf < handle
         sigmaAccelStill = 0.05
         rbSigmaInit  = 0.05   % m, initial per-anchor range-bias uncertainty
         rbSigmaRW    = 0.003  % m/sqrt(s), range-bias random walk
+        robust = true         % Huber-style M-estimation (Bitcraze-proven):
+                              % marginal outliers are DOWN-WEIGHTED (R inflated
+                              % so the effective NIS sits at the gate) instead
+                              % of hard-rejected; only gross outliers beyond
+                              % robustHardFactor x gate are rejected outright.
+        robustHardFactor = 10
     end
     properties (SetAccess = private)
         x = zeros(6, 1)
@@ -38,6 +44,7 @@ classdef FusionEkf < handle
         lastNis = NaN
         lastAccepted = true
         nRejected = 0
+        nSoft = 0             % robust: updates applied with inflated R
         nReinit = 0
         consecReject = 0
     end
@@ -116,7 +123,17 @@ classdef FusionEkf < handle
             S = H * obj.P * H' + R;
             nis = y' * (S \ y);
             obj.lastNis = nis;
-            ok = nis <= CHI2_95(min(numel(z), 3));
+            gate = CHI2_95(min(numel(z), 3));
+            if nis > gate && obj.robust && nis <= obj.robustHardFactor * gate
+                % Huber: keep the measurement but inflate its covariance so
+                % the effective NIS sits at the gate (bounded influence).
+                R = R * (nis / gate);
+                S = H * obj.P * H' + R;
+                obj.nSoft = obj.nSoft + 1;
+                ok = true;
+            else
+                ok = nis <= gate;
+            end
             obj.lastAccepted = ok;
             if ~ok
                 obj.nRejected = obj.nRejected + 1;

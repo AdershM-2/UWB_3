@@ -28,6 +28,7 @@ arguments
                                            % (7.5) to show its motion-coherence
                                            % advantage, and stricter ZUPT first)
     opts.sigmaR (1,1) double = 0.05        % per-range meas sigma (ranges mode)
+    opts.robust (1,1) logical = true       % Huber down-weighting vs hard gate
     opts.spotsJson string = ""
     opts.settleS (1,1) double = 2
     opts.sigmaAccelCV double = []      % override FusionEkf defaults if set
@@ -70,6 +71,7 @@ if ~opts.quiet, fprintf('%d sweeps (tag %d) from %s\n', N, opts.tagId, src); end
 
 %% Run the filter
 ekf = dune.FusionEkf();
+ekf.robust = opts.robust;
 if ~isempty(opts.sigmaAccelCV), ekf.sigmaAccelCV = opts.sigmaAccelCV; end
 if ~isempty(opts.sigmaAccel),   ekf.sigmaAccel = opts.sigmaAccel; end
 if opts.mode == "ranges"
