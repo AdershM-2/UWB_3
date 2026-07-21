@@ -30,7 +30,12 @@ function live_dual_tag(opts)
 %         logDir (logs)
 
 arguments
-    opts.baseline (1,1) double = 0.50     % known tag1<->tag2 antenna spacing (m)
+    opts.baseline (1,1) double = 0.50     % known tag1<->tag2 antenna spacing (m);
+                                          % pass the tape-measured value (the
+                                          % rigid solve enforces it exactly)
+    opts.rigid (1,1) logical = true       % also run dune.rigidSolve (both tags'
+                                          % ranges -> one [cx cy psi], L fixed):
+                                          % draws a centre + heading arrow
     opts.tagZ (1,1) double = 0.24
     opts.ekf (1,1) logical = true         % per-tag FusionEkf smoothing
     opts.powerCorr (1,1) logical = true
@@ -73,7 +78,12 @@ xlim(ax, [min(A.pos(:,1)) - opts.margin, max(A.pos(:,1)) + opts.margin]);
 ylim(ax, [min(A.pos(:,2)) - opts.margin, max(A.pos(:,2)) + opts.margin]);
 xlabel(ax, 'x (m)'); ylabel(ax, 'y (m)');
 baseH = plot(ax, nan, nan, '-', 'Color', [0.15 0.15 0.15], 'LineWidth', 2);
+% Rigid-body pose (dune.rigidSolve): centre marker + heading arrow
+centreH = plot(ax, nan, nan, 'p', 'MarkerFaceColor', [0.6 0.2 0.7], ...
+               'MarkerEdgeColor', 'k', 'MarkerSize', 13);
+headH   = plot(ax, nan, nan, '-', 'Color', [0.6 0.2 0.7], 'LineWidth', 2.5);
 ttl = title(ax, 'waiting for tags on UDP...');
+prevPsi = [];   % rigid heading warm-start across sweeps
 
 %% State — per-tag map, discovered as tags appear
 palette = [0.85 0.20 0.20;    % tag 1 red
@@ -149,6 +159,7 @@ while ishandle(fig)
         end
         if all(isfinite(p)), st.prevPos = p; end
         if ~isempty(s.imu), st.yawImu = yawFromQuat(s.imu.quat); st.hasImu = true; end
+        st.lastSweep = s;   % post-hold sweep, for the rigid joint solve
 
         tags(s.tag) = st;
         if ~ismember(s.tag, batchTags), batchTags(end+1) = s.tag; end %#ok<AGROW>
@@ -181,18 +192,41 @@ while ishandle(fig)
                                  yawImu, off, offMean);
             end
 
+            % Rigid-body joint solve: both tags' ranges -> one [cx cy psi],
+            % baseline fixed at L. Draws the centre + a heading arrow and gives
+            % a cleaner yaw than the raw pair.
+            rigStr = ''; rigOk = false;
+            if opts.rigid && ~isempty(stLo.lastSweep) && ~isempty(stHi.lastSweep)
+                o = dune.rigidSolve(stHi.lastSweep, stLo.lastSweep, A, ...
+                        opts.baseline, rangeCorr=RC, tagZ=opts.tagZ, psi0=prevPsi);
+                if o.ok
+                    rigOk = true;
+                    prevPsi = o.psi;
+                    aLen = 0.4;
+                    set(centreH, 'XData', o.c(1), 'YData', o.c(2));
+                    set(headH, 'XData', [o.c(1), o.c(1)+aLen*cos(o.psi)], ...
+                               'YData', [o.c(2), o.c(2)+aLen*sin(o.psi)]);
+                    rigStr = sprintf('   RIG c(%.2f,%.2f) yaw %+6.1f', ...
+                                     o.c(1), o.c(2), o.yawDeg);
+                end
+            end
+
             rec = struct('t_host', max(stLo.thost, stHi.thost), ...
                 'x1', round(stLo.pos(1),4), 'y1', round(stLo.pos(2),4), ...
                 'x2', round(stHi.pos(1),4), 'y2', round(stHi.pos(2),4), ...
                 'idLo', ids(1), 'idHi', ids(2), ...
                 'baseLen', round(baseLen,4), 'yawBase', round(yawBase,2));
             if isfinite(yawImu), rec.yawImu = round(yawImu,2); end
+            if rigOk
+                rec.cx = round(o.c(1),4); rec.cy = round(o.c(2),4);
+                rec.yawRig = round(o.yawDeg,2);
+            end
             fprintf(fidYaw, '%s\n', jsonencode(rec));
 
             ttl.String = sprintf(['T%d (%.2f,%.2f)  T%d (%.2f,%.2f)   ' ...
-                'base %.3f m (L %.3f, d%+.0fmm)   yaw %+6.1f%s'], ...
+                'base %.3f m (L %.3f, d%+.0fmm)   yaw %+6.1f%s%s'], ...
                 ids(1), stLo.pos(1), stLo.pos(2), ids(2), stHi.pos(1), stHi.pos(2), ...
-                baseLen, opts.baseline, 1000*(baseLen-opts.baseline), yawBase, offStr);
+                baseLen, opts.baseline, 1000*(baseLen-opts.baseline), yawBase, offStr, rigStr);
         end
     elseif tags.Count == 1 && ~isempty(batchTags)
         st = tags(batchTags(1));
@@ -224,6 +258,7 @@ st.ekf = dune.FusionEkf();
 st.rh  = dune.RangeHold();
 st.histA = nan(1, 8); st.histG = nan(1, 8);
 st.yawImu = NaN; st.hasImu = false;
+st.lastSweep = [];
 end
 
 function y = yawFromQuat(q)
