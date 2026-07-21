@@ -39,31 +39,44 @@ proved it is time-varying — no static map can absorb it; catch the source, don
 ~20 dB BELOW the channel peak on both links (fp/peak 0.07–0.11; A4's dominant arrival
 at +25 taps ≈ 7.5 m excess path; A5 = dense tail right behind the edge), edge only
 8–10 dB above pre-cursor noise — ground-grazing/Fresnel regime, cm-level LDE wander
-expected. A5 is pathological (worst edge at only 2.3 m + high failure rate) → inspect/
-reposition/board-swap. Quiet room already wanders (A4 p2p 132 mm/81 s) ≈ walking run —
-body motion NOT required. Not clock/timing. → D2 raised anchors is the fix candidate.
+expected. Quiet room already wanders (A4 p2p 132 mm/81 s) ≈ walking run — body motion
+NOT required. Not clock/timing.
 
-**Pending** (in order):
-- **Phase C — free observables**: firmware STAGED awaiting user review, then flash tag 240
-  (RTLS v4: per-anchor CFO + realised exchange-start ms; DIAG die-temp/Vbat tail; parser +
-  JSONL done) → locked-room long dwell (Kinect timestamps intrusions) → correlate vs
-  residuals. Role after A2: cheap close-out of tag-side hypotheses + anchor-drift watch.
-- **D2 — raised anchors 1.8–2 m** (no firmware; re-click + retune ~30 min): ground-bounce/
-  Fresnel share — now the PRIME suspect (z=0.24 m puts the floor inside the first Fresnel
-  zone on every link; 2–3 cm bounce excess path is unresolvable at 500 MHz).
-- **D3 — channel 2/5 alternation** (all boards + per-channel calibration): only if B/C point
-  at carrier-dependent multipath.
-- **D4 — continuous CIR tail** (~60 taps/exchange) for CIR-regression error models.
-- **E — TX-power boost** (stability lever, added 2026-07-21). Current state: smart TX
-  power OFF, TX_POWER = the driver's compliant table value for CH5/PRF64. Enabling
-  smart power is USELESS in our mode (it only boosts frames < 1 ms; 110 kb/s + long
-  preamble ≈ 2–3 ms/frame). The real option is a manual TX_POWER register boost
-  (up to 0x1F1F1F1F max gain, ~+10 dB over the table value) — bench/lab only, exceeds
-  regulatory average power. Higher SNR → steadier LDE first-path detection → less
-  breathing IF part of it is detection noise. Costs: reflash every boosted board
-  (tag-only variant = no anchor reflash but boosts only tag→anchor frames, i.e. half
-  the TWR timestamps), and it shifts fp by ~+10 dB → delay + power-bias calibration
-  redo (~1 h). Try AFTER B/C — if CIR shows a clean stable leading edge, power won't help.
+**A/B without A5** ✅ DONE 2026-07-21 (parked runs 195325/195625, both re-solved with and
+without A5): A5 is the worst breather (slow range p2p ~122 mm, 2–3× the others) but NLOS
+weights already suppress it — dropping it wins only ~15–20% wander and costs geometry.
+Every anchor breathes 40–92 mm ⇒ constellation-wide edge problem, keep all 5.
+
+**Output pin** ✅ SHIPPED 2026-07-21 (user request, ac5743c): live_tag freezes the
+REPORTED position while parked and inside a 5 cm deadband (release on motion or
+sustained excursion). Display/log-level only — masks the parked wobble, does not fix
+ranges. Moving-tag stability still needs the physics fixed.
+
+_Constraint (user, 2026-07-21): anchors CANNOT be raised (~fixed installation).
+The tag CAN be raised → D2 becomes a raised-TAG experiment._
+
+**Pending, in order (what we do next):**
+1. **Reflash tag 240** with the two Phase-C read fixes (ac5743c: SAR temp/Vbat was never
+   converting → constant −132 °C; CFO integrator read after the receiver re-armed → ~0).
+   User reviews `git show ac5743c`, recompiles TagWrover, flashes. 5 min.
+2. **Raised-TAG test (replaces D2).** Park the tag at one marked spot at normal height
+   (0.24 m) for ~3 min, then put the SAME tag on a box/pole ~0.8–1 m at the SAME (x,y)
+   for ~3 min, cir_capture A4 + A5 at both heights. Raising one end steepens the floor-
+   bounce angle (weaker reflection) and strengthens the direct ray, so the leading edge
+   should sharpen (fp/peak up) and breathing shrink. If it does → permanent fix = short
+   mast for the dual-tag plate on the rover (tagZ + truth clicks change, one recalib).
+   ~20 min, no firmware.
+3. **A5 link inspection.** Its edge is the worst at only 2.3 m: look for metal/clutter
+   near A5, try turning/moving it slightly, or swap the board with a spare to rule out
+   the board. Re-check with cir_capture A5. ~15 min.
+4. **Locked-room long dwell (Phase C payoff).** After step 1: tag parked, room empty,
+   30–60 min live_tag log → correlate per-anchor range vs die temp, CFO, cadence over
+   a long window. Closes out slow-drift hypotheses with real data. Passive.
+5. **Later / only if justified:** D3 channel 2/5 alternation (needs all-board reflash +
+   per-channel calibration — only if the raised-tag test says carrier-dependent
+   multipath); D4 continuous CIR tail for error models; E TX-power boost (manual
+   TX_POWER register, ~+10 dB, bench-only, ~1 h recalibration — only if the edge stays
+   noisy after the geometry fixes). Broadcast-POLL (step 6) and E both pushed later.
 
 ## Steps
 1. **Hardware** — ✅ DONE.
