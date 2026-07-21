@@ -159,18 +159,29 @@ better ranges.
    - 7.1 ✅ tag-241 delay tuned (tune_tag_delay).
    - 7.2 ✅ FusionEkf ported + validated offline (robust updates, stillMode, bias states);
      IMU accel prediction OFF until 7.3 frame validation.
-   - 7.3 ◀ **ACTIVE NEXT (new chat): two-tag / rigid-body.** Handoff prompt:
-     docs/handoff_two_tags.md. Both tags report to the host at once — but they CANNOT both
-     be on USB, so transport must go over **WiFi/UDP** (HostLink has a UDP path; UDP was
-     blocked on iitk — resolve via a phone hotspot / dedicated AP, verify first). Host
-     demuxes by tag_id (ingest is already tag-agnostic). Deliver: (a) dual-tag live ingest;
-     (b) **yaw from the rigid baseline** (atan2 of tag1→tag2) vs the BNO085 IMU yaw —
-     redundant with the IMU but validates the rotated IMU frame; (c) exploit the **fixed
-     inter-tag distance as a solver constraint** (rigid-body joint solve / MHE rigid-body:
-     state [cx cy psi speed], both tags' ranges constrain centre+yaw, gyro drives psi,
-     unicycle no-slip ties velocity to psi — the natural extension of model="unicycle").
-     Re-measure the true baseline (physical 0.50 m, fitted 0.53 — it is now a hard
-     constraint, so measure antenna-centre to antenna-centre precisely).
+   - 7.3 ◀ **IN PROGRESS: two-tag / rigid-body.** Handoff: docs/handoff_two_tags.md.
+     - Task 1 TRANSPORT ✅ 2026-07-21: the firmware ALREADY UDP-broadcasts every sweep;
+       only the host side was missing. Added dune.TagUdp (Java DatagramSocket — udpport
+       needs the Instrument Control Toolbox, not installed) + udp_probe. VERIFIED: BOTH
+       tags reach the host over WiFi/UDP (~3 Hz each, 5 anchors; 240=172.29.108.220,
+       241=172.29.109.27, host 172.29.108.246). The iitk UDP block did NOT bite — no
+       firmware change / hotspot needed.
+     - Tasks 2+3 DUAL DISPLAY + YAW ✅ 2026-07-21 (live_dual_tag): both tags demuxed on
+       one socket, per-tag solve+EKF, rigid baseline drawn, baseline yaw (atan2 of
+       tag_hi−tag_lo) vs IMU yaw + circular-mean offset, logs dual_log/dual_yaw. Validated
+       live with BOTH tags — rig behaves rigid (constant inter-tag distance, coupled
+       motion). IMU currently silent on tag 240 (fixable connection issue; only the
+       TagWrover tag 240 has a BNO085) so yaw-vs-IMU is deferred, baseline yaw works now.
+     - MEASURED BASELINE (parked, log dual_log_20260721_222016, 82 nearest-time pairs):
+       independent solves give L = 0.317 m mean (median 0.315, std 29 mm, p2p 162 mm).
+       Tags were physically ~30 cm apart (NOT the old 0.50 m) → the 0.317 m MATCHES to
+       ~2 cm, i.e. no systematic bias; the 29 mm wander is the per-anchor breathing showing
+       in the baseline. STILL NEEDED: a precise tape measure (antenna-centre to
+       antenna-centre) as the hard constraint L; placement is currently ad-hoc ~30 cm.
+     - Task 4 RIGID SOLVER ◀ NEXT: soft joint solve (‖p1−p2‖=L penalty) then rigid-body
+       MHE [cx cy psi speed] (both tags' ranges → centre+yaw; gyro→psi; unicycle no-slip).
+       NOTE the two tags sweep alternately (token ring), ~half-period apart — pair by
+       nearest t_host; the time skew matters under motion. Dataset: dual_log_20260721_222016.
    - 7.4 Kinect moving-truth recorder (AprilTag → world CSV, t_host-synced) — LATER, for
      overall accuracy comparison of EKF vs MHE(cv/unicycle) vs rigid-body.
    - 7.5 Moving validation: trajectories vs Kinect truth → RMSE ≤ 8 cm goal +
