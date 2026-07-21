@@ -99,6 +99,17 @@ better ranges.
    would inject wrong accelerations, and neither can be validated offline (raw-fix
    double-difference is too noisy) — both need **7.4 Kinect moving truth** to judge, which
    is now the bottleneck for all motion-model tuning.
+1d. **Non-holonomic (unicycle) MHE model** ◀ BUILT 2026-07-21 for the RC car (user placed
+   the tag on a small front-steering RC car). MheEstimator.model="unicycle": state
+   [px py theta speed], gyro yaw rate drives heading (change-in-yaw, NO absolute compass -
+   the UWB anchors the absolute heading), velocity FORCED along heading (no sideways slip),
+   speed free. Physically-correct model for a car-like vehicle; needs no trusted
+   orientation. Wired: mhe_replay/live_tag model="unicycle". Offline on the HOLONOMIC hand
+   log it is smoother (jerk 0.331 vs cv 0.362) but laggier (39 vs 28 mm) - expected, the
+   no-slip rule fights the hand's sideways motion; on the RC car the lag penalty should
+   vanish. Stable + fast (3.3 ms, max 8.5 ms). VALIDATE on an RC-car log (or 7.4 truth).
+   Check on the car: if turns lag, the gyro sign (worldYawRate) may need flipping for the
+   IMU mounting.
 2. **Reflash tag 240** with the Phase-C read fixes (ac5743c: SAR temp/Vbat constant
    −132 °C; CFO read after RX re-arm → ~0). Review `git show ac5743c`, recompile, flash.
    Needed only when we return to the slow-drift diagnostics. 5 min.

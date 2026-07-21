@@ -16,7 +16,8 @@ arguments
     opts.tagZ (1,1) double = 0.24
     opts.horizon (1,1) double = 10
     opts.sigmaAccel (1,1) double = 0.8
-    opts.useImu (1,1) logical = false      % feed gyro yaw rate -> coordinated turn
+    opts.useImu (1,1) logical = false      % feed gyro yaw rate -> turn/heading
+    opts.model string = "cv"               % "cv" | "unicycle" (non-holonomic)
     opts.spotsJson string = ""
     opts.casadiPath string = "C:\Users\itisa\Downloads\casadi-3.7.0"
     opts.plot (1,1) logical = true
@@ -34,6 +35,7 @@ fprintf('%d sweeps (tag %d) from %s\n', N, opts.tagId, src);
 ekf = dune.FusionEkf(); ekf.robust = true; ekf.sigmaAccelCV = opts.sigmaAccel;
 mhe = dune.MheEstimator(A.pos);
 mhe.horizon = opts.horizon; mhe.tagZ = opts.tagZ; mhe.sigmaAccel = opts.sigmaAccel;
+mhe.model = opts.model;
 mhe.build();
 
 Praw = nan(N,2); Pekf = nan(N,2); Pmhe = nan(N,2); thost = nan(N,1);

@@ -40,9 +40,13 @@ arguments
                                           % runs for stillness + the pin's velocity
                                           % gate; MHE just provides the display fix.
     opts.horizon (1,1) double = 10        % MHE window length (sweeps)
-    opts.useImu (1,1) logical = true      % MHE only: gyro yaw rate -> coordinated
-                                          % -turn model (delta; helps real curves,
-                                          % no-op on straight/translation motion)
+    opts.model string = "cv"              % MHE motion model: "cv" (holonomic) or
+                                          % "unicycle" (NON-HOLONOMIC car: gyro
+                                          % heading + no sideways slip; for the RC
+                                          % car / rover, not hand-carrying)
+    opts.useImu (1,1) logical = true      % MHE only: gyro yaw rate -> turn/heading
+                                          % (delta; helps real curves, no-op on
+                                          % straight/translation motion)
     opts.casadiPath string = "C:\Users\itisa\Downloads\casadi-3.7.0"
     opts.mode string = "pos"              % "pos" = fix updates (robust);
                                           % "ranges" = tightly-coupled with
@@ -130,9 +134,10 @@ mhe = [];
 if opts.estimator == "mhe"
     if isfolder(opts.casadiPath), addpath(char(opts.casadiPath)); end
     mhe = dune.MheEstimator(A.pos);
-    mhe.horizon = opts.horizon; mhe.tagZ = opts.tagZ;
+    mhe.horizon = opts.horizon; mhe.tagZ = opts.tagZ; mhe.model = opts.model;
     mhe.build();
-    fprintf('MHE estimator on (horizon %d, CasADi/IPOPT).\n', opts.horizon);
+    fprintf('MHE estimator on (horizon %d, model %s, CasADi/IPOPT).\n', ...
+            opts.horizon, opts.model);
 end
 tPrevEkf = NaN; tPrevMhe = NaN;
 histA = nan(1, 8); histG = nan(1, 8);   % rolling stillness window (IMU ZUPT)
