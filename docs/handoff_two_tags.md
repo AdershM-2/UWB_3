@@ -28,22 +28,29 @@ rotated); (2) use the **fixed inter-tag distance as a solver constraint** to imp
 position — the two tags are on a rigid plate a known distance apart.
 
 **Hard constraint — transport.** The two tags CANNOT both be on USB. So host ingest must
-come over **WiFi/UDP**, not serial. Facts:
-- HostLink.h already has a UDP path (`#if defined(UWB_HOSTLINK_UDP)`) that also mirrors to
-  serial; the sketches currently build the serial path. Check the build flag.
-- UDP was historically BLOCKED on the `iitk` WiFi (ping OK, all UDP dropped) — that is why
-  everything went serial. **Resolve this first**: try a phone hotspot or a dedicated AP,
-  or the tag as its own AP; verify a UDP packet actually reaches the host before building
-  on it. This is the gating risk for the whole step.
-- Both tags send `RTLS,v4,...` lines carrying `tag_id`; the host demuxes by tag_id. The
-  ingest layer (dune.parseRtlsLine / solveSweep / sweeps) is already protocol- and
-  tag-agnostic, so demuxing is just routing by tag_id. dune.TagSerial is serial-only —
-  a UDP receiver (udpport / dsp UDP) is the new piece.
+come over **WiFi/UDP**, not serial. Facts (VERIFIED 2026-07-21 in the code):
+- The firmware is ALREADY built with UDP: TagWrover.ino has `#define UWB_HOSTLINK_UDP`
+  active, so it connects to WiFi and UDP-broadcasts every `RTLS,v4,...` line to
+  `255.255.255.255:4100`, AND mirrors the same line to serial (HostLink.h sendSweep). So
+  **no firmware change is needed to START sending UDP — it is already broadcasting.**
+- What the HOST does today: live_tag reads SERIAL only, via dune.TagSerial (MATLAB
+  serialport → COM). There is NO UDP receiver on the host side. That is why WiFi shows in
+  the boot banner but everything runs over USB.
+- So the two missing pieces are HOST-SIDE ONLY:
+  1. A MATLAB UDP receiver (`udpport("datagram","IPV4")` bound to port 4100) that ingests
+     both tags' lines; demux by `tag_id` (dune.parseRtlsLine / solveSweep / sweeps are
+     already tag-agnostic — just route by tag_id). This replaces/supplements TagSerial.
+  2. The network must actually DELIVER the broadcast. UDP was historically BLOCKED on the
+     `iitk` WiFi (client-to-client / broadcast dropped) — the gating risk. Resolve via a
+     phone hotspot / dedicated AP (verify a single packet arrives first). Consider setting
+     HOST_IP to the host's real IP instead of 255.255.255.255 (unicast is often allowed
+     when broadcast is blocked) — that IS a small firmware edit (propose it, then flash).
 - Firmware rule stands: no reflash without showing the change first; keep libraries/UwbRtls
-  synced to C:\Users\itisa\OneDrive\Documents\Arduino\libraries\UwbRtls. Enabling UDP is a
-  firmware/build change → propose it, get approval, then flash. Tag 240 has a Phase-C read
-  fix staged but unflashed (commit ac5743c — SAR temp/Vbat + CFO); fold it in if you
-  reflash 240 anyway.
+  synced to C:\Users\itisa\OneDrive\Documents\Arduino\libraries\UwbRtls. Tag 240 has a
+  Phase-C read fix staged but unflashed (commit ac5743c — SAR temp/Vbat + CFO); fold it in
+  if you reflash 240 for the HOST_IP change anyway. Command send TO the tags (delay push
+  etc.) currently goes over serial; over UDP it would need a host→tag path (the firmware
+  has a UDP command listener? verify — else keep one tag on serial for commands).
 
 **The rigid-body idea (the real prize).** The two tag antennas are a fixed distance L
 apart on the plate. Instead of solving each tag independently and just reading yaw off the
