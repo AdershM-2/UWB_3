@@ -58,6 +58,11 @@ arguments
                                           % parked even when the IMU stays
                                           % jittery (residual+velocity, not
                                           % IMU stillness, gate the pin)
+    opts.smooth (1,1) double = 0.6        % output EMA alpha for the MOVING
+                                          % track (0<a<1, 1 = off). a=0.6 ~ 50%
+                                          % less jerk for ~25 mm lag; lower =
+                                          % smoother but laggier. Cosmetic:
+                                          % the EKF state is untouched.
     opts.trail (1,1) double = 300
     opts.margin (1,1) double = 2.0   % plot margin around the anchors (m)
     opts.logDir string = ""
@@ -117,6 +122,7 @@ stillCnt = 0;                            % UWB-only stillness (no-IMU tags)
 divergeStreak = 0;
 pinPos = [NaN, NaN]; pinOut = 0;        % output-pin (deadband) state
 pinned = false;
+smoothPos = [NaN, NaN];                 % output EMA state (moving smoother)
 
 while ishandle(fig)
     for e = ts.drainEvents()
@@ -241,6 +247,17 @@ while ishandle(fig)
             end
         else
             pinPos = [NaN, NaN]; pinOut = 0;
+        end
+        % Output smoother (moving only): a light EMA on the un-pinned track
+        % kills the high-frequency fix jitter. Re-seeded to the pin point
+        % while pinned so a release into motion starts without a lag jump.
+        if pinned || ~all(isfinite(po))
+            smoothPos = po;                          % track pin / hold on dropout
+        elseif opts.smooth < 1 && all(isfinite(smoothPos))
+            smoothPos = opts.smooth * po + (1 - opts.smooth) * smoothPos;
+            po = smoothPos;
+        else
+            smoothPos = po;                          % first valid sample / off
         end
         fprintf(fid, '%s\n', jsonencode(dune.sweepRecord(s, p, info, A, po)));
 

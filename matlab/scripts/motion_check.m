@@ -75,7 +75,7 @@ if ~isempty(move)
     lag = [];
     for s = move
         idx = s.i0:s.i1;
-        lag(end+1) = 1000*median(vecnorm(trk(idx,:) - raw(idx,:),2,2)); %#ok<AGROW>
+        lag(end+1) = 1000*median(vecnorm(trk(idx,:) - raw(idx,:),2,2),'omitnan'); %#ok<AGROW>
     end
     fprintf('MOVING segments: %d   EKF-vs-raw offset (lag proxy) median %.0f mm\n', ...
         numel(move), median(lag));
@@ -138,8 +138,10 @@ seg = struct('i0', num2cell(starts'), 'i1', num2cell(ends'), ...
 end
 
 function j = jerk(P, t)
+ok = all(isfinite(P),2);
+P = P(ok,:); t = t(ok);
 if size(P,1) < 6, j = NaN; return; end
 P = movmedian(P,3,1);
 a = diff(P,2,1);                          % 2nd difference ~ accel*dt^2
-j = mean(vecnorm(diff(a,1,1),2,2)) / max(median(diff(t)),1e-3);
+j = mean(vecnorm(diff(a,1,1),2,2),'omitnan') / max(median(diff(t)),1e-3);
 end
