@@ -68,14 +68,18 @@ better ranges.
    output scatter), ~50 cm moves read 0.44–0.58 m, moving track was jagged. Smoothed via
    an output EMA (opts.smooth 0.6: ~50% less jerk for ~25 mm lag; CV process-noise tuning
    was a poor lever, 13% for 3× lag). motion_check.m analyser committed.
-1b. **Experimental: Moving Horizon Estimator (MHE)** ◀ IN PROGRESS. CasADi 3.7.0 + IPOPT
-   (C:\Users\itisa\Downloads\casadi-3.7.0). Sliding window of N sweeps; decision vars =
-   the whole [p,v] trajectory; cost = robust (pseudo-Huber) per-anchor range fit +
-   constant-velocity process model + arrival cost. vs the EKF's snap-to-latest-fix it
-   re-linearises the geometry over the window, smooths structurally, and rejects outliers
-   smoothly. Offline A/B vs EKF on the motion log + static campaign (dune.MheEstimator,
-   mhe_replay.m) BEFORE any live wiring; report smoothness/lag/wander + per-sweep solve
-   time (live feasibility). Then decide whether to offer it in live_tag.
+1b. **Experimental: Moving Horizon Estimator (MHE)** ✅ EVALUATED 2026-07-21
+   (dune.MheEstimator, mhe_replay.m; CasADi 3.7.0 + IPOPT at
+   C:\Users\itisa\Downloads\casadi-3.7.0). Sliding window of N=10 sweeps, decision vars =
+   whole [p,v] trajectory, cost = robust pseudo-Huber range fit + CV process + ZUPT
+   (still) + arrival cost. **Verdict:** MOTION 40–44% smoother than the EKF (jerk
+   0.34–0.38 vs 0.49–0.61) for +8 mm lag, 3 ms/solve median (live-feasible at 5 Hz);
+   STATIC a tie (median wander 55 vs 54 mm, RMSE 61 vs 64 mm — MHE marginally better).
+   Two warts: intermittent output jumps on 2/19 spots (S8 wander 248 mm — IPOPT landing
+   on different near-optimal solutions step-to-step; RMSE stays fine so mean is right,
+   not ZUPT-fixable) and a solve-time tail (p95 29 ms, max 61 ms). Not default-ready
+   until a jump-guard + solve-tail are addressed; the motion smoothness is a real win.
+   Committed e2ab0d5/eefa215.
 2. **Reflash tag 240** with the Phase-C read fixes (ac5743c: SAR temp/Vbat constant
    −132 °C; CFO read after RX re-arm → ~0). Review `git show ac5743c`, recompile, flash.
    Needed only when we return to the slow-drift diagnostics. 5 min.
