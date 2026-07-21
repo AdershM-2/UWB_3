@@ -16,44 +16,35 @@ M-estimation, stillMode, per-anchor bias states, RangeHold) — anchor-dropout j
 active investigation below (expert-reviewed 2026-07-21).**
 
 ## ACTIVE: wobble root-cause investigation (before 7.3)
-Reviewer verdict: estimator layer is at its floor; the residual lives in RF/timing physics.
-Prime suspect: the **burst-vs-sweep anomaly** (+60…+500 mm per anchor between HWCALIB burst
-ranging and ring-sweep ranging, same rangeTo(), slope exactly c·1 tick = 4.69 mm) — i.e.
-measured range depends on exchange cadence/receiver state, and production cadence wanders
-(skips, retries, ring) → slow per-anchor range wander invisible to power features.
-Formula audit DONE: TwrEngine uses the Neirynck product form (not symmetric averaging), so
-CFO×asymmetry is excluded at first order.
+Remaining error: slow ~5–7 cm per-anchor breathing at fixed position. The oracle test
+proved it is time-varying — no static map can absorb it; catch the source, don't smooth it.
 
-- **Phase A — offline forensics** ✅ DONE 2026-07-21 (docs/phase_a_findings.md,
-  tooling matlab/scripts/phase_a_forensics.m):
-  A1 cadence hypothesis REJECTED as breathing driver (gap↔residual |ρ| ≤ 0.06;
-     real ±5–7 mm receiver-idle micro-effect confirmed, anchor-dependent sign);
-  A2 breathing is PER-ANCHOR INDEPENDENT (off-diag corr +0.05) ⇒ link/anchor-side,
-     NOT tag-side common-mode — kills tag clock/temp for the dominant component;
-  A3 stillMode noise-budget inversion NEGATIVE (spot-specific residuals poison the
-     bias memory across dwells; RMSE 91→319 mm) — FusionEkf.stillInvert kept
-     default-off; estimator floor confirmed.
-- **Phase B — CIR snapshots** ◀ NEXT (tag-240 reflash staged, idle()-fix 1c10187):
-  quiet dwell / walking dwell / far anchor. Fork: leading edge breathes with residual
-  (channel/LDE cause — A2 predicts this) vs edge frozen while range wanders
-  (clock/timing/cadence cause).
-- **Phase C — free observables** — firmware STAGED for review (RTLS v4: per-anchor
-  CFO raw carrier integrator + realised exchange-start ms; DIAG tail with DW1000 die
-  temp + Vbat per sweep; parser + JSONL logging done; tag-only, anchors untouched) →
-  locked-room long dwell (Kinect timestamps intrusions) → correlate vs residuals.
-  Role after A2: cheap close-out of tag-side hypotheses + per-anchor drift watch.
-- **Phase D — isolation experiments** (by cost):
-  D1 metronomic TDMA dwell (tag-only: fixed-period sweep, no skip-backoff, dummy
-     exchanges) → cadence in/out;
-  D2 raised anchors 1.8–2 m (no firmware; re-click + retune ~30 min) → ground-bounce/
-     Fresnel share (z=0.24 m puts the floor inside the first Fresnel zone on every link;
-     bounce excess path 2–3 cm is unresolvable at 500 MHz → fuses into the leading edge);
-  D3 channel 2/5 alternation + inter-channel disagreement as multipath metric (all boards,
-     per-channel calibration sets — only if B/C/D1 point at carrier-dependent multipath);
-  D4 continuous CIR tail (~60 taps/exchange) for CIR-regression error models.
-- Reviewer's bets, in order: cadence-coupled receiver state; ground bounce modulated by
-  bodies; tag-side thermal drift. The oracle test proved the residual is time-varying at
-  fixed position — no static map can absorb it; catch the source, don't smooth it.
+**Ruled out so far** (details: docs/phase_a_findings.md, docs/wobble_mitigation_summary.md):
+- ~~Estimator layer~~ — at its floor (reviewer + A3; nine mitigations already shipped:
+  delays, power corr, EKF, ZUPT, stillMode, bias states, RangeHold, robust M-est, NLOS ablation).
+- ~~CFO×asymmetry in the TWR formula~~ — audit: Neirynck product form, excluded at 1st order.
+- ~~Cadence/receiver-state as breathing driver~~ — A1: gap↔residual |ρ| ≤ 0.06; only a real
+  ±5–7 mm receiver-idle micro-effect (anchor-signed) + A3-anchor +39 mm first-sample-after-skip.
+- ~~Tag-side common-mode (tag clock/temp/Vbat)~~ — A2: breathing is per-anchor INDEPENDENT
+  (off-diag corr +0.05) ⇒ the cause is per-link/anchor-side.
+- ~~A3 stillMode noise-budget inversion~~ — negative, 91→319 mm (spot-specific residuals
+  poison bias memory); stillInvert kept default-off.
+- ~~D1 metronomic-cadence dwell~~ — obsoleted by A1's offline rejection of cadence.
+
+**Pending** (in order):
+- **Phase B — CIR snapshots** ◀ NEXT, user-side (tag-240 reflash staged, idle()-fix 1c10187):
+  cir_capture quiet dwell / walking dwell / far anchor. Fork: leading edge breathes with
+  residual (channel/LDE — A2 predicts this) vs edge frozen while range wanders (timing).
+- **Phase C — free observables**: firmware STAGED awaiting user review, then flash tag 240
+  (RTLS v4: per-anchor CFO + realised exchange-start ms; DIAG die-temp/Vbat tail; parser +
+  JSONL done) → locked-room long dwell (Kinect timestamps intrusions) → correlate vs
+  residuals. Role after A2: cheap close-out of tag-side hypotheses + anchor-drift watch.
+- **D2 — raised anchors 1.8–2 m** (no firmware; re-click + retune ~30 min): ground-bounce/
+  Fresnel share — now the PRIME suspect (z=0.24 m puts the floor inside the first Fresnel
+  zone on every link; 2–3 cm bounce excess path is unresolvable at 500 MHz).
+- **D3 — channel 2/5 alternation** (all boards + per-channel calibration): only if B/C point
+  at carrier-dependent multipath.
+- **D4 — continuous CIR tail** (~60 taps/exchange) for CIR-regression error models.
 
 ## Steps
 1. **Hardware** — ✅ DONE.
