@@ -1,84 +1,96 @@
 # DUNE UWB — Rebuild Plan
 
-_Last updated: 2026-07-20. Paper is sidelined for now — focus is the working system._
+_Last updated: 2026-07-21. Paper sidelined — focus is the working system._
 
 ## Goal
 2D position RMSE ≤ 3 cm with the rover **moving** (EKF-filtered). Dual-tag yaw.
 Kinect v2 = ground truth. All host work in MATLAB. Pose output is display/logging only.
 
-## Current status (2026-07-20)
-Steps 1–5 DONE. Live MATLAB pipeline runs at ~5–6 Hz over COM. Anchor delays calibrated
-against Kinect click-truth (parked error 4 mm at the calibration point). Tier-2 power-bias
-correction fitted on a 19-spot campaign and wired into the pipeline: static per-sweep
-2D RMSE 199 → 94 mm (median 69). Remaining error is per-sweep noise tails (oracle ceiling
-~72 mm RMSE) — that is step-7 filtering territory, not calibration.
+## Current status (2026-07-21)
+Steps 1–5 done, 7.1–7.2 done. Live MATLAB pipeline at 5–7 Hz over COM with EKF display.
+Anchor delays calibrated on the sweep path vs Kinect truth (4 mm at the reference point);
+tag 241 own-delay tuned (one step, −507 mm → −2 mm common offset). Tier-2 power correction
+wired (floor-wide static per-sweep RMSE 199 → 94 mm). FusionEkf ported + hardened (robust
+M-estimation, stillMode, per-anchor bias states, RangeHold) — anchor-dropout jumps down to
+6–10 mm. **Remaining error: slow ~5–7 cm per-anchor "breathing" at fixed position — the
+active investigation below (expert-reviewed 2026-07-21).**
+
+## ACTIVE: wobble root-cause investigation (before 7.3)
+Reviewer verdict: estimator layer is at its floor; the residual lives in RF/timing physics.
+Prime suspect: the **burst-vs-sweep anomaly** (+60…+500 mm per anchor between HWCALIB burst
+ranging and ring-sweep ranging, same rangeTo(), slope exactly c·1 tick = 4.69 mm) — i.e.
+measured range depends on exchange cadence/receiver state, and production cadence wanders
+(skips, retries, ring) → slow per-anchor range wander invisible to power features.
+Formula audit DONE: TwrEngine uses the Neirynck product form (not symmetric averaging), so
+CFO×asymmetry is excluded at first order.
+
+- **Phase A — offline forensics on existing logs** (no hardware):
+  A1 per-anchor realised inter-exchange gap ↔ range-residual correlation;
+  A2 range-space breathing decomposition (cross-anchor residual correlation per dwell:
+     common-mode ⇒ tag-side, independent ⇒ anchor/link);
+  A3 estimator retune: stillMode inverts the noise budget (position Q → ~0, per-anchor
+     bias RW opened) so breathing is absorbed into bias states.
+- **Phase B — CIR snapshots** (tag-240 reflash staged, idle()-fix committed 1c10187):
+  quiet dwell / walking dwell / far anchor. Fork: leading edge breathes with residual
+  (channel/LDE cause) vs edge frozen while range wanders (clock/timing/cadence cause).
+- **Phase C — free observables** (tag-only firmware + parser): DW1000 die temperature,
+  Vbat (SAR ADC), per-anchor CFO (carrier integrator), realised cadence per sweep →
+  locked-room long dwell (Kinect timestamps intrusions) → correlate vs residuals.
+- **Phase D — isolation experiments** (by cost):
+  D1 metronomic TDMA dwell (tag-only: fixed-period sweep, no skip-backoff, dummy
+     exchanges) → cadence in/out;
+  D2 raised anchors 1.8–2 m (no firmware; re-click + retune ~30 min) → ground-bounce/
+     Fresnel share (z=0.24 m puts the floor inside the first Fresnel zone on every link;
+     bounce excess path 2–3 cm is unresolvable at 500 MHz → fuses into the leading edge);
+  D3 channel 2/5 alternation + inter-channel disagreement as multipath metric (all boards,
+     per-channel calibration sets — only if B/C/D1 point at carrier-dependent multipath);
+  D4 continuous CIR tail (~60 taps/exchange) for CIR-regression error models.
+- Reviewer's bets, in order: cadence-coupled receiver state; ground bounce modulated by
+  bodies; tag-side thermal drift. The oracle test proved the residual is time-varying at
+  fixed position — no static map can absorb it; catch the source, don't smooth it.
 
 ## Steps
-1. **Fix hardware** — ✅ DONE. All 5 anchors + 2 tags healthy.
-2. **Ground truth (Kinect overhead camera)** — ✅ DONE. h=4.066 m, f=1067.6 px, distortion
-   negligible, homography tape-anchored; world registration RMSE 13.5 mm
-   (world_registration.mat). The registered Kinect is a click-to-world truth machine
-   (clickTagTruth / clickAnchorsWorld). _Leftover moved to step 7: the moving-trajectory
-   recorder (Kinect → AprilTag → world CSV, time-synced to UWB)._
-3. **MATLAB pipeline** — ✅ DONE. dune.TagSerial (COM ingest) → parseRtlsLine →
-   dune.solveSweep (sentinel reject → corrections → NLOS gap weights → weighted LM) →
-   live_tag map + JSONL logging (readSessionLog schema, fully replayable);
-   replay_rtls exercises the exact live chain on old logs. Ingest is protocol-agnostic
-   (a "sweep" = set of (anchor, range, rx, fp)@t) ready for broadcast-POLL.
-4. **Calibration** — ✅ DONE (2026-07-20).
-   - Anchor antenna delays: NVS junk from the July-1 bad-hardware era found (+4 m on A5!)
-     and wiped; final delays tuned on the **sweep path** against Kinect truth
-     (tune_delays_sweep): all anchors ±16 mm, parked position error 4 mm.
-     Final ticks A1 16501, A2 16515, A3 16488, A4 16483, A5 16552; tag 240 = reference
-     (16360, sketch default). anchor_bias.json (July-1) is DEPRECATED.
-   - **Open firmware anomaly:** HWCALIB burst ranging vs ring-sweep ranging differ by a
-     constant per-anchor offset (+60..+500 mm) though both call the same rangeTo().
-     Investigate before broadcast-POLL work. Evidence in config/delay_calibration.json.
-   - Tier-2: per-anchor **linear-in-first-path-power** range correction (slopes
-     7.7–9.5 mm/dB), fitted on 19 Kinect-truth spots, LOSO-validated, wired as
-     config/range_correction.json → dune.solveSweep(rangeCorr=…), auto-loaded by
-     live_tag / static_accuracy.
-   - _Backlog: refit the power-bias model as a **PINN** (physics-informed NN — APS011
-     leading-edge physics as the prior, campaign data as training set) instead of plain
-     linear regression; the 19-spot dataset is saved in
-     results/static_accuracy_20260720_195637/bakeoff.mat (+ raw serial logs). Revisit
-     after step 7._
-   - _Tag 241 delay still uncalibrated → step 7.1._
-5. **Static accuracy** — ✅ DONE (baseline). 19-spot campaign: per-sweep RMSE 94 mm
-   corrected (worst spot 141). Oracle test: even a perfect static correction leaves
-   ~72 mm per-sweep RMSE (noise tails) → the ≤3 cm goal rides on step-7 filtering.
-   Harness: static_accuracy.m (park → click truth → 20 s sweeps → stats/map/JSON).
-6. **Broadcast-POLL** _(headline contribution)_ — DEFERRED (after step 7). Write the
-   protocol spec first (no reflash without joint review); A/B vs round-robin with the
-   step-7 pipeline as the control.
-7. **Fusion + dynamics** — ◀ NEXT.
-   - 7.1 Tune tag 241's own delay (SETMYDELAY sweep-path variant of tune_delays_sweep;
-     241 on USB, truth via clickTagTruth(0.24, 241)). Anchors must NOT be retuned.
-   - 7.2 Port the EKF to MATLAB (reference: D:\UWB_modules_new rigid_body_ekf.py):
-     CV model + per-sweep range/position updates, innovation gating, ZUPT;
-     develop OFFLINE first on the existing campaign logs (they contain walking segments).
-   - 7.3 IMU fusion (tag 240 BNO085: quaternion/gyro already parsed + logged) and
-     dual-tag ingest (two TagSerial ports) → rigid-body state incl. dual-tag yaw
-     (0.48 m baseline) cross-checked against IMU yaw.
-   - 7.4 Kinect moving-truth recorder: AprilTag on the unit → world CSV @ ~15-30 Hz,
-     t_host-synced (the step-2 leftover; alignTruth/readVisionLog already exist).
-   - 7.5 Moving validation: walked/driven trajectories, EKF output vs Kinect truth →
-     moving 2D RMSE (goal ≤ 3 cm) + yaw accuracy.
-8. **Run live** — MATLAB live pipeline + display/logging (largely exists via live_tag;
-   extend to EKF output + dual tag).
+1. **Hardware** — ✅ DONE.
+2. **Kinect ground truth** — ✅ DONE (h=4.066 m, f=1067.6 px, registration RMSE 13.5 mm;
+   click-to-world truth via clickTagTruth/clickAnchorsWorld). _Leftover → 7.4: moving
+   trajectory recorder._
+3. **MATLAB pipeline** — ✅ DONE (TagSerial → parseRtlsLine → solveSweep → live_tag/
+   replay_rtls; protocol-agnostic sweeps; JSONL logs replayable).
+4. **Calibration** — ✅ DONE. Sweep-path delay tuning (anchors 2026-07-20, tag 241
+   2026-07-20; NVS junk wiped); Tier-2 per-anchor linear-in-fp correction
+   (config/range_correction.json, auto-loaded). anchor_bias.json deprecated.
+   _Backlog: PINN refit failed at 19 spots (linear 98 vs PINN 108 mm LOSO) — revisit with
+   dense 7.4 truth + CIR features._
+5. **Static accuracy** — ✅ DONE (baseline): per-sweep RMSE 94 mm corrected; oracle ceiling
+   ~72 mm (time-varying residual → see investigation above).
+6. **Broadcast-POLL** _(headline contribution)_ — DEFERRED (after 7). Spec first; A/B vs
+   round-robin with the step-7 pipeline as control. Investigate burst-vs-sweep anomaly
+   BEFORE protocol work (same timing-physics territory).
+7. **Fusion + dynamics**:
+   - 7.1 ✅ tag-241 delay tuned (tune_tag_delay).
+   - 7.2 ✅ FusionEkf ported + validated offline (robust updates, stillMode, bias states);
+     IMU accel prediction OFF until 7.3 frame validation.
+   - 7.3 ◀ NEXT after investigation: dual-port live app (240=COM12, 241=COM11), yaw from
+     the 0.48 m baseline vs BNO085 yaw (validates IMU frame → re-enable useImuAccel);
+     also gives the dual-tag parked discriminator for the investigation.
+   - 7.4 Kinect moving-truth recorder (AprilTag → world CSV, t_host-synced).
+   - 7.5 Moving validation: trajectories vs Kinect truth → RMSE ≤ 3 cm goal + yaw
+     accuracy; recalibrate ZUPT/stillness thresholds with labelled motion data.
+8. **Run live** — extend live_tag to dual-tag EKF output (largely exists).
 
 ## Key notes
-- Data quality: reject `rx = -2147483648` (error sentinel; handled in solveSweep).
-- Range corrections live on-device (NVS antenna delays) + host config
-  (range_correction.json). anchor_bias.json is historical only.
-- Serial open resets the tag (DTR) — boot banner shows its delay source every connect.
-- Firmware is proven; protocol changes need discussion before any reflash.
-- Keep the vendored library (`libraries/UwbRtls`) in sync with the Arduino-path copy.
-- Transport: PC reads tags over **serial/COM** (UDP blocked on `iitk` WiFi).
+- Reject `rx = -2147483648` sentinels (handled in solveSweep).
+- Corrections: on-device NVS delays + config/range_correction.json. Serial open resets the
+  tag (DTR) → boot banner shows each connect's delay source.
+- Firmware changes need discussion before reflash; keep libraries/UwbRtls synced with the
+  Arduino-path copy on EVERY library change.
+- Transport: serial/COM only (UDP blocked on iitk WiFi).
+- Radio: MODE_LONGDATA_RANGE_ACCURACY (110 kb/s, PRF 64, long preamble), CHANNEL_5.
+  Driver applies the APS011 power-bias table on every RX timestamp (always on).
 
 ## Board → sketch map
 | Board | Sketch | ID |
 |---|---|---|
 | Anchors 1–5 | `sketches/Anchor/Anchor.ino` | `ANCHOR_ID` 0x01–0x05 |
-| Tag with IMU | `sketches/TagWrover/TagWrover.ino` | 0xF0 |
-| Tag without IMU | `sketches/Tag/Tag.ino` | 0xF1 |
+| Tag with IMU | `sketches/TagWrover/TagWrover.ino` | 0xF0 (COM12) |
+| Tag without IMU | `sketches/Tag/Tag.ino` | 0xF1 (COM11) |
