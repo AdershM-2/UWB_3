@@ -111,9 +111,15 @@
 #define RX_TIME 0x15
 #define LEN_RX_TIME 14
 #define RX_STAMP_SUB 0x00
+#define FP_INDEX_SUB 0x05
 #define FP_AMPL1_SUB 0x07
 #define LEN_RX_STAMP LEN_STAMP
+#define LEN_FP_INDEX 2
 #define LEN_FP_AMPL1 2
+
+// Accumulator memory (CIR of the last received frame; read via
+// DW1000Class::readAccumulator - needs forced clocks + 1 dummy byte)
+#define ACC_MEM 0x25
 
 // RX frame quality
 #define RX_FQUAL 0x12

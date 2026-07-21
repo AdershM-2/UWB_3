@@ -162,6 +162,62 @@ bool TwrEngine::rangeTo(uint8_t anchorAddr, float& distanceMeters, float& rxPowe
 }
 
 // ===========================================================================
+// TAG: CIR capture (diagnostics)
+// ===========================================================================
+// Deliberately DUPLICATES the proven rangeTo() flow instead of refactoring
+// it: the accumulator must be read after the RANGE_REPORT arrives and
+// BEFORE the receiver is re-armed (any newly received frame overwrites it).
+bool TwrEngine::captureCir(uint8_t anchorAddr, float& distanceMeters,
+                           float& rxPowerDbm, uint16_t& fpIndexRaw,
+                           byte* cirBuf, uint16_t nTaps) {
+  _seq++;
+
+  DW1000.newTransmit();
+  DW1000.setDefaults();
+  writeHeader(_tx, MSG_POLL, _myAddr, anchorAddr, _seq);
+  DW1000.setData(_tx, UWB_HDR_LEN);
+  DW1000.startTransmit();
+  if (!waitSent(20)) { startRx(); return false; }
+  DW1000.getTransmitTimestamp(_timePollSent);
+
+  startRx();
+  if (!waitReceived(45)) { startRx(); return false; }
+  readFrame();
+  if (frameType(_rx) != MSG_POLL_ACK || frameSrc(_rx) != anchorAddr ||
+      !frameIsForUs(_rx, _myAddr)) {
+    startRx(); return false;
+  }
+  DW1000.getReceiveTimestamp(_timePollAckReceived);
+
+  DW1000.newTransmit();
+  DW1000.setDefaults();
+  writeHeader(_tx, MSG_RANGE, _myAddr, anchorAddr, _seq);
+  DW1000Time delay = DW1000Time(UWB_REPLY_DELAY_US, DW1000Time::MICROSECONDS);
+  _timeRangeSent = DW1000.setDelay(delay);
+  packRangePayload(_tx, _timePollSent, _timePollAckReceived, _timeRangeSent);
+  DW1000.setData(_tx, UWB_RANGE_LEN);
+  DW1000.startTransmit();
+  if (!waitSent(30)) { startRx(); return false; }
+
+  startRx();
+  if (!waitReceived(30)) { startRx(); return false; }
+  readFrame();
+  if (frameType(_rx) != MSG_RANGE_REPORT || frameSrc(_rx) != anchorAddr) {
+    startRx(); return false;
+  }
+  unpackReportPayload(_rx, distanceMeters, rxPowerDbm);
+  rxPowerDbm = DW1000.getReceivePower();
+  _fpPower   = DW1000.getFirstPathPower();
+  _quality   = DW1000.getReceiveQuality();
+  // The point of this function: CIR + first-path index of THIS frame,
+  // captured before the receiver is re-armed.
+  fpIndexRaw = DW1000.getFirstPathIndex();
+  DW1000.readAccumulator(cirBuf, (uint16_t)(nTaps * 4));
+  startRx();
+  return true;
+}
+
+// ===========================================================================
 // TAG (survey initiator) — ask an anchor to range to another anchor
 // ===========================================================================
 bool TwrEngine::surveyRequest(uint8_t anchorAddr, uint8_t targetAddr,

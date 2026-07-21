@@ -1394,6 +1394,37 @@ void DW1000Class::getReceiveTimestamp(DW1000Time& time) {
 	correctTimestamp(time);
 }
 
+uint16_t DW1000Class::getFirstPathIndex() {
+	byte fp[LEN_FP_INDEX];
+	readBytes(RX_TIME, FP_INDEX_SUB, fp, LEN_FP_INDEX);
+	return (uint16_t)fp[0] | ((uint16_t)fp[1] << 8);
+}
+
+void DW1000Class::readAccumulator(byte data[], uint16_t n) {
+	// Reading ACC_MEM requires forcing the accumulator memory clock on and
+	// discarding one leading dummy byte (DW1000 User Manual 7.2.27; same
+	// sequence as decadriver's dwt_readaccdata).
+	byte pmscctrl0[LEN_PMSC_CTRL0];
+	memset(pmscctrl0, 0, LEN_PMSC_CTRL0);
+	readBytes(PMSC, PMSC_CTRL0_SUB, pmscctrl0, LEN_PMSC_CTRL0);
+	byte b0 = pmscctrl0[0];
+	byte b1 = pmscctrl0[1];
+	pmscctrl0[0] = 0x48 | (b0 & 0xB3);   // force system + accumulator clocks
+	pmscctrl0[1] = 0x80 | b1;            // AMCE: accumulator memory clock enable
+	writeBytes(PMSC, PMSC_CTRL0_SUB, pmscctrl0, 2);
+	byte* tmp = (byte*)malloc((size_t)n + 1);
+	if(tmp != NULL) {
+		readBytes(ACC_MEM, 0, tmp, n + 1);
+		memcpy(data, tmp + 1, n);        // skip the dummy byte
+		free(tmp);
+	} else {
+		memset(data, 0, n);
+	}
+	pmscctrl0[0] = b0 & 0xB3;            // restore previous clock state
+	pmscctrl0[1] = b1 & 0x7F;
+	writeBytes(PMSC, PMSC_CTRL0_SUB, pmscctrl0, 2);
+}
+
 // TODO check function, different type violations between byte and int
 void DW1000Class::correctTimestamp(DW1000Time& timestamp) {
 	// base line dBm, which is -61, 2 dBm steps, total 18 data points (down to -95 dBm)

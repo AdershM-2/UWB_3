@@ -53,6 +53,13 @@ public:
   bool surveyRequest(uint8_t anchorAddr, uint8_t targetAddr,
                      float& distanceMeters, float& rxPowerDbm);
 
+  // CIR diagnostics: one full DS-TWR exchange, then read the accumulator
+  // (channel impulse response) and LDE first-path index of the final
+  // RANGE_REPORT frame before re-arming RX. cirBuf must hold nTaps*4 bytes
+  // (int16 real + int16 imag per tap). 64 MHz PRF -> up to 1016 taps.
+  bool captureCir(uint8_t anchorAddr, float& distanceMeters, float& rxPowerDbm,
+                  uint16_t& fpIndexRaw, byte* cirBuf, uint16_t nTaps);
+
   // Push a new antenna delay value to an anchor (calibration). Returns true
   // when the anchor ACKs. Retries up to maxRetries times on timeout.
   bool pushAntDelay(uint8_t anchorAddr, uint16_t delayTicks, uint8_t maxRetries = 3);

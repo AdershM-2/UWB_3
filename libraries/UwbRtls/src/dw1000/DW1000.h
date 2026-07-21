@@ -259,6 +259,14 @@ public:
 	static float getReceivePower();
 	static float getFirstPathPower();
 	static float getReceiveQuality();
+
+	/* CIR diagnostics: raw LDE first-path index (10.6 fixed point; divide by
+	 * 64 for the accumulator tap) and the accumulator (CIR) of the most
+	 * recently received frame. Read BOTH before re-arming the receiver -
+	 * the next received frame overwrites them. n is in BYTES (4 per tap:
+	 * int16 real + int16 imag, little-endian). */
+	static uint16_t getFirstPathIndex();
+	static void     readAccumulator(byte data[], uint16_t n);
 	
 	/* interrupt management. */
 	static void interruptOnSent(boolean val);

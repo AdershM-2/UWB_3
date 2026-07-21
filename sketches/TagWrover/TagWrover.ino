@@ -522,6 +522,50 @@ static void handleHwCalibSelf(const char* cmd) {
   oled.showSplash("SELF CALIB", oledL1, oledL2);
 }
 
+// ── CIR capture (diagnostics) ────────────────────────────────────────────────
+// CIR,<anchorId> → one TWR exchange with that anchor, then stream the
+// accumulator (channel impulse response) of the final RANGE_REPORT frame:
+//   CIRHDR,<aid>,<fpIndexRaw>,<nTaps>,<dist_mm>     (fpIndexRaw is 10.6 fixed)
+//   CIRD,<aid>,<seg>,<hex...>                        (32 taps = 128 B per line)
+//   CIREND,<aid>
+static void handleCirCapture(const char* cmd) {
+  unsigned int aid = 0;
+  if (sscanf(cmd, "CIR,%u", &aid) != 1) {
+    host.sendRaw("CIR_FAIL,0,parse_error\n");
+    return;
+  }
+  static const uint16_t NTAPS = 1016;      // 64 MHz PRF accumulator length
+  static byte cir[NTAPS * 4];
+  float dist = 0.0f, rxp = 0.0f;
+  uint16_t fpIdx = 0;
+  if (!engine.captureCir((uint8_t)aid, dist, rxp, fpIdx, cir, NTAPS)) {
+    char buf[32];
+    snprintf(buf, sizeof(buf), "CIR_FAIL,%u,no_range\n", aid);
+    host.sendRaw(buf);
+    return;
+  }
+  char hdr[64];
+  snprintf(hdr, sizeof(hdr), "CIRHDR,%u,%u,%u,%ld\n",
+           aid, fpIdx, NTAPS, (long)(dist * 1000.0f));
+  host.sendRaw(hdr);
+  static char line[16 + 256 + 2];
+  for (uint16_t seg = 0; (uint32_t)seg * 32 < NTAPS; seg++) {
+    uint16_t t0 = seg * 32;
+    uint16_t nT = (uint16_t)((NTAPS - t0 < 32) ? (NTAPS - t0) : 32);
+    int off = snprintf(line, sizeof(line), "CIRD,%u,%u,", aid, seg);
+    for (uint16_t b = 0; b < nT * 4; b++)
+      off += snprintf(line + off, sizeof(line) - (size_t)off, "%02X",
+                      cir[(uint32_t)t0 * 4 + b]);
+    line[off++] = '\n';
+    line[off] = '\0';
+    host.sendRaw(line);
+    delay(2);                              // let the serial buffer drain
+  }
+  char tail[24];
+  snprintf(tail, sizeof(tail), "CIREND,%u\n", aid);
+  host.sendRaw(tail);
+}
+
 static void dispatchCmd(const char* cmd) {
   if (strcmp(cmd, "SURVEY") == 0)
     runSurvey();
@@ -535,6 +579,8 @@ static void dispatchCmd(const char* cmd) {
     handleSetMyDelay(cmd);
   else if (strncmp(cmd, "GETMYDELAY,", 11) == 0)
     handleGetMyDelay(cmd);
+  else if (strncmp(cmd, "CIR,", 4) == 0)
+    handleCirCapture(cmd);
 }
 
 // ── loop ──────────────────────────────────────────────────────────────────────
