@@ -16,6 +16,7 @@ arguments
     opts.tagZ (1,1) double = 0.24
     opts.horizon (1,1) double = 10
     opts.sigmaAccel (1,1) double = 0.8
+    opts.useImu (1,1) logical = false      % feed gyro yaw rate -> coordinated turn
     opts.spotsJson string = ""
     opts.casadiPath string = "C:\Users\itisa\Downloads\casadi-3.7.0"
     opts.plot (1,1) logical = true
@@ -59,9 +60,14 @@ for i = 1:N
     if still && ekf.initialized, ekf.updateZupt(); end
     if ekf.initialized, Pekf(i,:) = ekf.pos; end
 
+    % gyro yaw rate (world-vertical) for the coordinated-turn model
+    omega = 0;
+    if opts.useImu && ~isempty(s.imu)
+        omega = worldYawRate(s.imu.quat, s.imu.gyro);
+    end
     % MHE (same stillness signal the EKF uses -> parity on ZUPT)
     tic;
-    [pm, ~, mi] = mhe.push(info.rangeCorr, info.w, max(dt,1e-3), p, still);
+    [pm, ~, mi] = mhe.push(info.rangeCorr, info.w, max(dt,1e-3), p, still, omega);
     solveT(i) = toc;
     if ~mi.warmup, Pmhe(i,:) = pm; elseif all(isfinite(p)), Pmhe(i,:) = p; end
 end
@@ -154,6 +160,17 @@ end
 
 function o = offset(P, R, mv)
 o = 1000*median(vecnorm(P(mv,:) - R(mv,:),2,2),'omitnan');
+end
+
+function w = worldYawRate(quat, gyro)
+% World-vertical component of the body angular rate (rad/s). For a flat tag
+% this equals body gz; the quat rotation makes it tilt-robust.
+w = 0;
+if numel(quat) ~= 4 || numel(gyro) ~= 3, return; end
+nq = norm(quat); if nq < 0.5, return; end
+q = quat/nq; a=q(1); b=q(2); c=q(3); d=q(4);
+R3 = [2*(b*d-c*a), 2*(c*d+b*a), 1-2*(b^2+c^2)];   % 3rd row of R(quat)
+w = R3 * gyro(:);
 end
 
 function w = wander(P)

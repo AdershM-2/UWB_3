@@ -85,6 +85,20 @@ better ranges.
    velocity gate, MHE just supplies the display fix. Committed e2ab0d5/eefa215/<this>.
    NEXT if pursued: the S8 static-drift (tighter arrival cost / stronger ZUPT) and the
    solve-tail; otherwise it is a validated experimental smoother for motion.
+1c. **IMU fusion into the MHE** ◀ STARTED 2026-07-21. IMU probe on log 202505: accel
+   bias ~0 ([-0.007 -0.026 +0.013] m/s^2 while still — BNO085 gravity-removal is clean, so
+   the old EKF divergence was a FRAME problem, not bias), tag is flat (body gz = world yaw
+   rate), but the absolute orientation frame looks rotated (world-accel vs measured dv/dt
+   corr -0.39, wrong sign). Per the user's delta idea: added a **gyro coordinated-turn**
+   model to the MHE (velocity vector rotates at the world-vertical gyro rate; DELTA-only,
+   no absolute heading; omega=0 => exact CV). Wired: MheEstimator OMEGA param + trapezoidal
+   position, mhe_replay useImu, live_tag(estimator="mhe", useImu=true default). Offline on
+   the hand-carried log it is a WASH (jerk 0.357 CV vs 0.362 turn) — that log has no
+   sustained turns to exploit; it should help a rover driving real arcs. Safe (guard
+   intact, solve time unchanged). Accel-delta-velocity fusion DEFERRED: the rotated frame
+   would inject wrong accelerations, and neither can be validated offline (raw-fix
+   double-difference is too noisy) — both need **7.4 Kinect moving truth** to judge, which
+   is now the bottleneck for all motion-model tuning.
 2. **Reflash tag 240** with the Phase-C read fixes (ac5743c: SAR temp/Vbat constant
    −132 °C; CFO read after RX re-arm → ~0). Review `git show ac5743c`, recompile, flash.
    Needed only when we return to the slow-drift diagnostics. 5 min.

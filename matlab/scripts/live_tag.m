@@ -40,6 +40,9 @@ arguments
                                           % runs for stillness + the pin's velocity
                                           % gate; MHE just provides the display fix.
     opts.horizon (1,1) double = 10        % MHE window length (sweeps)
+    opts.useImu (1,1) logical = true      % MHE only: gyro yaw rate -> coordinated
+                                          % -turn model (delta; helps real curves,
+                                          % no-op on straight/translation motion)
     opts.casadiPath string = "C:\Users\itisa\Downloads\casadi-3.7.0"
     opts.mode string = "pos"              % "pos" = fix updates (robust);
                                           % "ranges" = tightly-coupled with
@@ -237,7 +240,11 @@ while ishandle(fig)
             dtm = 0;
             if isfinite(tPrevMhe), dtm = min(max(s.thost - tPrevMhe, 0), 1); end
             tPrevMhe = s.thost;
-            [pm, ~, mi] = mhe.push(info.rangeCorr, info.w, max(dtm, 1e-3), p, still);
+            omega = 0;
+            if opts.useImu && ~isempty(s.imu)
+                omega = worldYawRate(s.imu.quat, s.imu.gyro);
+            end
+            [pm, ~, mi] = mhe.push(info.rangeCorr, info.w, max(dtm, 1e-3), p, still, omega);
             if ~mi.warmup && all(isfinite(pm))
                 pe = pm;                 % MHE output feeds the pin/smoother/display
             elseif all(isfinite(p))
@@ -349,4 +356,17 @@ if isempty(g), nlosF = 1; else, nlosF = 1 + mean(max(0, g / 6)); end
 dop = sqrt(trace(Rb));
 dopF = 1 + max(0, (dop - 0.05) / 0.05);
 R = Rb * min(max(rmsF * nlosF * dopF, 1), 50);
+end
+
+function w = worldYawRate(quat, gyro)
+% World-vertical component of the body angular rate (rad/s) for the MHE
+% coordinated-turn model. For a flat tag this equals body gz; the quat
+% rotation keeps it correct under tilt. Uses only the rate (delta), not
+% absolute heading, so an unvalidated orientation offset does not matter.
+w = 0;
+if numel(quat) ~= 4 || numel(gyro) ~= 3, return; end
+nq = norm(quat); if nq < 0.5, return; end
+q = quat / nq; a = q(1); b = q(2); c = q(3); d = q(4);
+R3 = [2*(b*d - c*a), 2*(c*d + b*a), 1 - 2*(b^2 + c^2)];   % 3rd row of R(quat)
+w = R3 * gyro(:);
 end

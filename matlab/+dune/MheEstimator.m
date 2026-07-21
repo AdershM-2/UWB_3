@@ -68,6 +68,7 @@ classdef MheEstimator < handle
             Z     = MX.sym('Z', Ma, N);     % measured ranges (0 where absent)
             W     = MX.sym('W', Ma, N);     % per-anchor weights (0 = absent)
             DT    = MX.sym('DT', N-1, 1);   % inter-step dt (s)
+            OMEGA = MX.sym('OMEGA', N-1, 1);% gyro yaw rate per interval (rad/s)
             STILL = MX.sym('STILL', N, 1);  % 1 where the tag was still (ZUPT)
             PRIOR = MX.sym('PRIOR', 4, 1);  % arrival target
 
@@ -88,14 +89,21 @@ classdef MheEstimator < handle
                 dt = DT(k);
                 qp = 0.5 * sigA * dt^2 + 1e-6;
                 qv = sigA * dt + 1e-6;
-                dp = X(1:2,k+1) - X(1:2,k) - X(3:4,k) * dt;
-                dv = X(3:4,k+1) - X(3:4,k);
+                % Trapezoidal position (accounts for the velocity turning
+                % across the interval).
+                dp = X(1:2,k+1) - X(1:2,k) - 0.5*(X(3:4,k) + X(3:4,k+1)) * dt;
+                % Coordinated-turn velocity model: the velocity vector rotates
+                % at the gyro yaw rate. DELTA-only - just the rate, no absolute
+                % heading; OMEGA=0 reduces this exactly to constant-velocity.
+                th = OMEGA(k) * dt; cth = cos(th); sth = sin(th);
+                vrot = [cth*X(3,k) - sth*X(4,k); sth*X(3,k) + cth*X(4,k)];
+                dv = X(3:4,k+1) - vrot;
                 f = f + sum1(dp.^2) / qp^2 + sum1(dv.^2) / qv^2;
             end
             f = f + sum1((X(1:2,1) - PRIOR(1:2)).^2) / obj.arrivalPos^2 ...
                   + sum1((X(3:4,1) - PRIOR(3:4)).^2) / obj.arrivalVel^2;
 
-            P = [Z(:); W(:); DT; STILL; PRIOR];
+            P = [Z(:); W(:); DT; OMEGA; STILL; PRIOR];
             nlp = struct('x', X(:), 'f', f, 'p', P);
             opts = struct('print_time', false, 'ipopt', ...
                 struct('print_level', 0, 'sb', 'yes', 'max_iter', obj.maxIter, ...
@@ -109,18 +117,22 @@ classdef MheEstimator < handle
             obj.lastP = [NaN NaN]; obj.lastV = [0 0];
         end
 
-        function [p, v, info] = push(obj, z, w, dt, pHint, still)
+        function [p, v, info] = push(obj, z, w, dt, pHint, still, omega)
             % z,w: M x 1 corrected ranges / weights (NaN or w<=0 = absent).
             % dt:  seconds since the previous push. pHint: raw fix [1x2] to
             % seed the optimiser (optional; may be NaN). still: logical, tag
             % stationary this sweep -> zero-velocity pseudo-measurement.
+            % omega: gyro yaw rate (rad/s) this sweep -> coordinated-turn model
+            % (0 or omitted = constant-velocity).
             if nargin < 5, pHint = [NaN NaN]; end
             if nargin < 6, still = false; end
+            if nargin < 7 || ~isfinite(omega), omega = 0; end
             z = z(:); w = w(:);
             bad = ~isfinite(z) | ~isfinite(w) | w <= 0;
             z(bad) = 0; w(bad) = 0;
             obj.buf{end+1} = struct('z', z, 'w', w, 'dt', max(dt, 1e-3), ...
-                                    'still', double(logical(still)));
+                                    'still', double(logical(still)), ...
+                                    'omega', omega);
 
             N = obj.horizon;
             info = struct('warmup', true, 'cost', NaN, 'iters', 0);
@@ -131,12 +143,15 @@ classdef MheEstimator < handle
 
             % Assemble parameters over the window.
             Zm = zeros(obj.M, N); Wm = zeros(obj.M, N);
-            DTv = zeros(N-1, 1); STv = zeros(N, 1);
+            DTv = zeros(N-1, 1); OMv = zeros(N-1, 1); STv = zeros(N, 1);
             for k = 1:N
                 Zm(:,k) = obj.buf{k}.z;
                 Wm(:,k) = obj.buf{k}.w;
                 STv(k)  = obj.buf{k}.still;
-                if k >= 2, DTv(k-1) = obj.buf{k}.dt; end
+                if k >= 2
+                    DTv(k-1) = obj.buf{k}.dt;
+                    OMv(k-1) = 0.5 * (obj.buf{k-1}.omega + obj.buf{k}.omega);
+                end
             end
 
             % Warm start + arrival prior.
@@ -151,7 +166,7 @@ classdef MheEstimator < handle
                 X0 = reshape([Xp(:,2:end), last], [], 1);
                 pr = obj.prior;
             end
-            Pv = [Zm(:); Wm(:); DTv; STv; pr];
+            Pv = [Zm(:); Wm(:); DTv; OMv; STv; pr];
 
             r = obj.solver('x0', X0, 'p', Pv);
             X = full(r.x);
