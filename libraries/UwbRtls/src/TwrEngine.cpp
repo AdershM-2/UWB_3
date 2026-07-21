@@ -205,12 +205,15 @@ bool TwrEngine::captureCir(uint8_t anchorAddr, float& distanceMeters,
   if (frameType(_rx) != MSG_RANGE_REPORT || frameSrc(_rx) != anchorAddr) {
     startRx(); return false;
   }
+  // Force the transceiver OFF before touching the accumulator: with the
+  // auto-re-arm receive mode the receiver is already hunting for the next
+  // preamble by now, and an ACTIVE receiver clears/rewrites ACC_MEM -
+  // reading it live returns zeros (hence the 2026-07-21 all-zero captures).
+  DW1000.idle();
   unpackReportPayload(_rx, distanceMeters, rxPowerDbm);
   rxPowerDbm = DW1000.getReceivePower();
   _fpPower   = DW1000.getFirstPathPower();
   _quality   = DW1000.getReceiveQuality();
-  // The point of this function: CIR + first-path index of THIS frame,
-  // captured before the receiver is re-armed.
   fpIndexRaw = DW1000.getFirstPathIndex();
   DW1000.readAccumulator(cirBuf, (uint16_t)(nTaps * 4));
   startRx();
