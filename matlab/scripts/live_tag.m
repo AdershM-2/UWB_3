@@ -41,6 +41,10 @@ arguments
                                           % (dropouts/skips). Best while parked
                                           % or slow; may lag when carried fast.
     opts.tagZ (1,1) double = 0.24         % tag antenna height (matches truth clicks)
+    opts.exclude double = []              % anchor ids to DROP before solving
+                                          % (A/B a bad link, e.g. exclude=5;
+                                          % ranging still happens on the tag,
+                                          % raw log keeps the full sweep)
     opts.trail (1,1) double = 300
     opts.margin (1,1) double = 2.0   % plot margin around the anchors (m)
     opts.logDir string = ""
@@ -125,6 +129,21 @@ while ishandle(fig)
         % Last-known-range hold: full anchor geometry across dropouts
         nHeld = 0;
         if opts.hold, [s, nHeld] = rh.apply(s, still); end
+
+        % Host-side anchor exclusion (A/B test of a suspect link). AFTER the
+        % hold so RangeHold cannot re-inject the excluded anchor from memory.
+        if ~isempty(opts.exclude)
+            keep = ~ismember(s.ids, opts.exclude);
+            s.ids = s.ids(keep); s.dist = s.dist(keep);
+            s.rx = s.rx(keep); s.fp = s.fp(keep);
+            if numel(s.qual) >= numel(keep), s.qual = s.qual(keep); end
+            if isfield(s, 'wScale') && numel(s.wScale) >= numel(keep)
+                s.wScale = s.wScale(keep);
+            end
+            if isfield(s, 'cfoPpm') && numel(s.cfoPpm) >= numel(keep)
+                s.cfoPpm = s.cfoPpm(keep); s.tex = s.tex(keep);
+            end
+        end
 
         [p, info] = dune.solveSweep(s, A, bias=B, rangeCorr=RC, ...
                                     tagZ=opts.tagZ, x0=prevPos, ...
