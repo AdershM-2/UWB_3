@@ -40,7 +40,9 @@ if ~isempty(haveDiag)
         % per-anchor CFO (ppm) / realised exchange time (ms) from RTLS v4
         cfo = NaN; tex = NaN;
         k = find(s.ids == A.ids(c), 1);
-        if ~isempty(k) && isfield(s, 'cfoPpm')
+        % k can exceed numel(cfoPpm): RangeHold appends held entries to
+        % s.ids/dist but not to the parser's cfoPpm/tex (no real exchange).
+        if ~isempty(k) && isfield(s, 'cfoPpm') && k <= numel(s.cfoPpm)
             cfo = round(s.cfoPpm(k), 3); tex = s.tex(k);
         end
         diag(end+1) = struct('id', A.ids(c), 'rx', info.rx(c), ...
