@@ -147,12 +147,18 @@ bool TwrEngine::rangeTo(uint8_t anchorAddr, float& distanceMeters, float& rxPowe
   if (frameType(_rx) != MSG_RANGE_REPORT || frameSrc(_rx) != anchorAddr) {
     startRx(); _failStreak++; return false;
   }
+  // Diagnostics of THIS frame. Force the transceiver idle first: with the
+  // auto-re-arm receive mode the receiver is already hunting again by now,
+  // and a hunting receiver re-tracks DRX_CARRIER_INT - reading it live
+  // returns ~0 (same mechanism as the 2026-07-21 all-zero CIR captures).
+  // The exchange is complete at this point, so a brief idle is safe;
+  // captureCir has used the identical pattern since 1c10187.
+  DW1000.idle();
   unpackReportPayload(_rx, distanceMeters, rxPowerDbm);
   // Phase 2.1 NLOS: read total RX power AND first-path power of the SAME received
   // frame (this RANGE_REPORT) so the host's NLOS score (rx - fp) is a valid
   // same-frame comparison. This overrides the anchor-reported rx (which was
-  // measured on the other link, making rx-fp physically meaningless). All three
-  // reads must happen before startRx() re-arms the receiver and clears RX state.
+  // measured on the other link, making rx-fp physically meaningless).
   rxPowerDbm = DW1000.getReceivePower();
   _fpPower   = DW1000.getFirstPathPower();
   _quality   = DW1000.getReceiveQuality();

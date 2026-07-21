@@ -929,15 +929,21 @@ void DW1000Class::convertToByte(char string[], byte* bytes) {
 }
 
 void DW1000Class::getTempAndVbat(float& temp, float& vbat) {
-	// follow the procedure from section 6.4 of the User Manual
+	// follow the procedure from section 6.4 of the User Manual.
+	// NOTE the SAR must be left RUNNING while the conversion completes and the
+	// results are read; the original code wrote enable(0x01) then disable(0x00)
+	// back-to-back BEFORE reading, so the ADC never converted and both
+	// registers read 0 (-132 C / 2.51 V constants seen on the wire).
 	byte step1 = 0x80; writeBytes(RF_CONF, 0x11, &step1, 1);
 	byte step2 = 0x0A; writeBytes(RF_CONF, 0x12, &step2, 1);
 	byte step3 = 0x0F; writeBytes(RF_CONF, 0x12, &step3, 1);
-	byte step4 = 0x01; writeBytes(TX_CAL, NO_SUB, &step4, 1);
-	byte step5 = 0x00; writeBytes(TX_CAL, NO_SUB, &step5, 1);
+	byte sarOff = 0x00; writeBytes(TX_CAL, NO_SUB, &sarOff, 1);   // reset SAR
+	byte sarOn  = 0x01; writeBytes(TX_CAL, NO_SUB, &sarOn, 1);    // start conversion
+	delayMicroseconds(10);   // conversion needs ~2.5 us
 	byte sar_lvbat = 0; readBytes(TX_CAL, 0x03, &sar_lvbat, 1);
 	byte sar_ltemp = 0; readBytes(TX_CAL, 0x04, &sar_ltemp, 1);
-	
+	writeBytes(TX_CAL, NO_SUB, &sarOff, 1);                       // SAR off
+
 	// calculate voltage and temperature
 	vbat = (sar_lvbat - _vmeas3v3) / 173.0f + 3.3f;
 	temp = (sar_ltemp - _tmeas23C) * 1.14f + 23.0f;

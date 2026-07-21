@@ -45,6 +45,13 @@ arguments
                                           % (A/B a bad link, e.g. exclude=5;
                                           % ranging still happens on the tag,
                                           % raw log keeps the full sweep)
+    opts.pin (1,1) logical = true         % output deadband while parked: hold
+                                          % the reported position frozen while
+                                          % still and the fix stays within
+                                          % pinRadius; sustained excursion or
+                                          % motion releases it
+    opts.pinRadius (1,1) double = 0.05    % m, deadband radius (the breathing
+                                          % lives below ~5-7 cm)
     opts.trail (1,1) double = 300
     opts.margin (1,1) double = 2.0   % plot margin around the anchors (m)
     opts.logDir string = ""
@@ -102,6 +109,8 @@ tPrevEkf = NaN;
 histA = nan(1, 8); histG = nan(1, 8);   % rolling stillness window (IMU ZUPT)
 stillCnt = 0;                            % UWB-only stillness (no-IMU tags)
 divergeStreak = 0;
+pinPos = [NaN, NaN]; pinOut = 0;        % output-pin (deadband) state
+pinned = false;
 
 while ishandle(fig)
     for e = ts.drainEvents()
@@ -195,10 +204,33 @@ while ishandle(fig)
             end
             if ekf.initialized, pe = ekf.pos; end
         end
-        fprintf(fid, '%s\n', jsonencode(dune.sweepRecord(s, p, info, A, pe)));
+        % Output pin (deadband): while parked the true position is constant,
+        % so any sub-radius movement of the estimate is breathing, not motion
+        % - freeze the OUTPUT at the pin point. Purely an output-stage clamp:
+        % the EKF/solver state is untouched (the A3 experiment showed that
+        % absorbing breathing INSIDE the estimator corrupts it).
+        po = p;
+        if opts.ekf && all(isfinite(pe)), po = pe; end
+        pinned = false;
+        if opts.pin && still && all(isfinite(po))
+            if any(~isfinite(pinPos)), pinPos = po; pinOut = 0; end
+            if norm(po - pinPos) < opts.pinRadius
+                pinOut = 0;
+                po = pinPos; pinned = true;
+            else
+                pinOut = pinOut + 1;         % excursion beyond the deadband
+                if pinOut >= 8               % sustained ~1.5 s -> re-pin there
+                    pinPos = po; pinOut = 0; pinned = true;
+                else
+                    po = pinPos; pinned = true;   % brief excursion: hold
+                end
+            end
+        else
+            pinPos = [NaN, NaN]; pinOut = 0;
+        end
+        fprintf(fid, '%s\n', jsonencode(dune.sweepRecord(s, p, info, A, po)));
 
-        disp_ = p;
-        if opts.ekf && all(isfinite(pe)), disp_ = pe; end
+        disp_ = po;
         if all(isfinite(p)), set(rawH, 'XData', p(1), 'YData', p(2)); end
         if all(isfinite(p))
             nSolved = nSolved + 1;
@@ -218,6 +250,7 @@ while ishandle(fig)
             if numel(tRate) > 1, hz = (numel(tRate) - 1) / (tRate(end) - tRate(1)); end
             mode = '';
             if opts.ekf && all(isfinite(pe)), mode = ' EKF'; end
+            if pinned, mode = [mode ' PIN']; end
             heldStr = '';
             if nHeld > 0, heldStr = sprintf(' (%d held)', nHeld); end
             ttl.String = sprintf(['tag %d%s   (%.2f, %.2f) m   %.1f Hz   ' ...
