@@ -59,9 +59,9 @@ for i = 1:N
     if still && ekf.initialized, ekf.updateZupt(); end
     if ekf.initialized, Pekf(i,:) = ekf.pos; end
 
-    % MHE
+    % MHE (same stillness signal the EKF uses -> parity on ZUPT)
     tic;
-    [pm, ~, mi] = mhe.push(info.rangeCorr, info.w, max(dt,1e-3), p);
+    [pm, ~, mi] = mhe.push(info.rangeCorr, info.w, max(dt,1e-3), p, still);
     solveT(i) = toc;
     if ~mi.warmup, Pmhe(i,:) = pm; elseif all(isfinite(p)), Pmhe(i,:) = p; end
 end

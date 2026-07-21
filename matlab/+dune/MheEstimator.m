@@ -32,6 +32,7 @@ classdef MheEstimator < handle
         arrivalPos = 0.15      % arrival-cost sigma, position (m)
         arrivalVel = 0.6       % arrival-cost sigma, velocity (m/s)
         huberDelta = 0.15      % robust range-residual threshold (m)
+        zuptSigma  = 0.03      % zero-velocity pseudo-meas sigma when still (m/s)
         maxIter   = 60
     end
     properties (SetAccess = private)
@@ -62,16 +63,20 @@ classdef MheEstimator < handle
             Z     = MX.sym('Z', Ma, N);     % measured ranges (0 where absent)
             W     = MX.sym('W', Ma, N);     % per-anchor weights (0 = absent)
             DT    = MX.sym('DT', N-1, 1);   % inter-step dt (s)
+            STILL = MX.sym('STILL', N, 1);  % 1 where the tag was still (ZUPT)
             PRIOR = MX.sym('PRIOR', 4, 1);  % arrival target
 
             f = MX(0);
-            d = obj.huberDelta; sR2 = obj.sigmaR^2;
+            d = obj.huberDelta; sR2 = obj.sigmaR^2; zs2 = obj.zuptSigma^2;
             for k = 1:N
                 px = X(1,k); py = X(2,k);
                 pred = sqrt((px - Ax).^2 + (py - Ay).^2 + dz.^2 + 1e-9);
                 r = pred - Z(:,k);
                 ph = d^2 * (sqrt(1 + (r ./ d).^2) - 1);   % pseudo-Huber (smooth)
                 f = f + sum1(W(:,k) .* ph) / sR2;
+                % Zero-velocity pseudo-measurement while still (parity with the
+                % EKF's ZUPT; without it the window drifts on parked breathing).
+                f = f + STILL(k) * sum1(X(3:4,k).^2) / zs2;
             end
             sigA = obj.sigmaAccel;
             for k = 1:N-1
@@ -85,7 +90,7 @@ classdef MheEstimator < handle
             f = f + sum1((X(1:2,1) - PRIOR(1:2)).^2) / obj.arrivalPos^2 ...
                   + sum1((X(3:4,1) - PRIOR(3:4)).^2) / obj.arrivalVel^2;
 
-            P = [Z(:); W(:); DT; PRIOR];
+            P = [Z(:); W(:); DT; STILL; PRIOR];
             nlp = struct('x', X(:), 'f', f, 'p', P);
             opts = struct('print_time', false, 'ipopt', ...
                 struct('print_level', 0, 'sb', 'yes', 'max_iter', obj.maxIter, ...
@@ -98,15 +103,18 @@ classdef MheEstimator < handle
             obj.buf = {}; obj.Xw = []; obj.prior = []; obj.lastP = [NaN NaN];
         end
 
-        function [p, v, info] = push(obj, z, w, dt, pHint)
+        function [p, v, info] = push(obj, z, w, dt, pHint, still)
             % z,w: M x 1 corrected ranges / weights (NaN or w<=0 = absent).
             % dt:  seconds since the previous push. pHint: raw fix [1x2] to
-            % seed the optimiser (optional; may be NaN).
+            % seed the optimiser (optional; may be NaN). still: logical, tag
+            % stationary this sweep -> zero-velocity pseudo-measurement.
             if nargin < 5, pHint = [NaN NaN]; end
+            if nargin < 6, still = false; end
             z = z(:); w = w(:);
             bad = ~isfinite(z) | ~isfinite(w) | w <= 0;
             z(bad) = 0; w(bad) = 0;
-            obj.buf{end+1} = struct('z', z, 'w', w, 'dt', max(dt, 1e-3));
+            obj.buf{end+1} = struct('z', z, 'w', w, 'dt', max(dt, 1e-3), ...
+                                    'still', double(logical(still)));
 
             N = obj.horizon;
             info = struct('warmup', true, 'cost', NaN, 'iters', 0);
@@ -116,10 +124,12 @@ classdef MheEstimator < handle
             if ~obj.built, obj.build(); end
 
             % Assemble parameters over the window.
-            Zm = zeros(obj.M, N); Wm = zeros(obj.M, N); DTv = zeros(N-1, 1);
+            Zm = zeros(obj.M, N); Wm = zeros(obj.M, N);
+            DTv = zeros(N-1, 1); STv = zeros(N, 1);
             for k = 1:N
                 Zm(:,k) = obj.buf{k}.z;
                 Wm(:,k) = obj.buf{k}.w;
+                STv(k)  = obj.buf{k}.still;
                 if k >= 2, DTv(k-1) = obj.buf{k}.dt; end
             end
 
@@ -135,7 +145,7 @@ classdef MheEstimator < handle
                 X0 = reshape([Xp(:,2:end), last], [], 1);
                 pr = obj.prior;
             end
-            Pv = [Zm(:); Wm(:); DTv; pr];
+            Pv = [Zm(:); Wm(:); DTv; STv; pr];
 
             r = obj.solver('x0', X0, 'p', Pv);
             X = full(r.x);
