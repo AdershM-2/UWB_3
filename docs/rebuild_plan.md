@@ -178,10 +178,31 @@ better ranges.
        ~2 cm, i.e. no systematic bias; the 29 mm wander is the per-anchor breathing showing
        in the baseline. STILL NEEDED: a precise tape measure (antenna-centre to
        antenna-centre) as the hard constraint L; placement is currently ad-hoc ~30 cm.
-     - Task 4 RIGID SOLVER ◀ NEXT: soft joint solve (‖p1−p2‖=L penalty) then rigid-body
-       MHE [cx cy psi speed] (both tags' ranges → centre+yaw; gyro→psi; unicycle no-slip).
-       NOTE the two tags sweep alternately (token ring), ~half-period apart — pair by
-       nearest t_host; the time skew matters under motion. Dataset: dual_log_20260721_222016.
+     - Task 4 RIGID SOLVER ✅ built 2026-07-21: dune.rigidSolve (hard constraint — L baked
+       into the parameterisation p = c ± (L/2)[cosψ,sinψ]; LM over [cx cy psi]; reuses
+       solveSweep weights). Offline on the parked log: baseline std 36 mm → exact, centre
+       wander −15%, yaw std 7.1→5.6°, range rmse 61→70 mm (expected 3-DOF cost). Wired
+       into live_dual_tag (purple centre + heading arrow, yawRig logged). rigid_replay.m
+       compares indep vs rigid on any udp_raw log. Rigid-body MHE (temporal, gyro→psi,
+       no-slip) NOT started — wait for IMU fix + 7.4 truth.
+     - ⚠ END-OF-DAY STATE (2026-07-21 evening): the LAST FULLY RELIABLE config is
+       single-tag live_tag over COM (+ MHE unicycle). The dual-tag live run DEGRADED in a
+       later session: dots slid apart / away (screenshot ~3.5 m apart at ~30 cm true).
+       Diagnosed so far (udp_raw/dual_log_20260721_223629 + diag replay):
+       1. A1 & A2 stopped answering mid-run → most sweeps only A3/A4/A5, rx weak
+          (−95…−103 dBm). WHY is open: RF/power/obstruction/connection — check tomorrow.
+       2. A3/A4/A5 are the three TOP-EDGE anchors (y≈2.1–2.3, near-collinear) →
+          multilaterate's degenerate-geometry gate (sv(2)<0.3, multilaterate.m:41)
+          correctly refuses a fix (iters=0, mirror ambiguity). NOT a solver bug.
+       3. With no fixes the per-tag FusionEkf COASTS on its CV prediction (reached
+          (−17,−7)) and live_dual_tag's display FOLLOWS it — my bug: live_tag only moves
+          the dot on a valid raw fix; live_dual_tag dropped that guard. FIX FIRST
+          TOMORROW (guard display on finite raw p + reinit EKF after a long coast).
+       4. The rigid centre stayed CORRECT throughout (re-solves from both tags' ranges
+          jointly — 6 measurements, less degenerate). Argues for making the rigid solve
+          the primary dual-tag output.
+       TOMORROW: fix (3), then investigate (1) — solver vs wifi vs connection — then
+       re-validate live; tape-measure L; tag-240 IMU (silent, connection suspected).
    - 7.4 Kinect moving-truth recorder (AprilTag → world CSV, t_host-synced) — LATER, for
      overall accuracy comparison of EKF vs MHE(cv/unicycle) vs rigid-body.
    - 7.5 Moving validation: trajectories vs Kinect truth → RMSE ≤ 8 cm goal +
