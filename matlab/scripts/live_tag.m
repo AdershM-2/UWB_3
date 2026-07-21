@@ -47,11 +47,17 @@ arguments
                                           % raw log keeps the full sweep)
     opts.pin (1,1) logical = true         % output deadband while parked: hold
                                           % the reported position frozen while
-                                          % still and the fix stays within
+                                          % parked and the fix stays within
                                           % pinRadius; sustained excursion or
                                           % motion releases it
     opts.pinRadius (1,1) double = 0.05    % m, deadband radius (the breathing
                                           % lives below ~5-7 cm)
+    opts.pinResid (1,1) double = 0.06     % m, fallback pin trigger: solve fit
+                                          % residual below this AND...
+    opts.pinVel (1,1) double = 0.08       % ...EKF speed below this counts as
+                                          % parked even when the IMU stays
+                                          % jittery (residual+velocity, not
+                                          % IMU stillness, gate the pin)
     opts.trail (1,1) double = 300
     opts.margin (1,1) double = 2.0   % plot margin around the anchors (m)
     opts.logDir string = ""
@@ -211,8 +217,16 @@ while ishandle(fig)
         % absorbing breathing INSIDE the estimator corrupts it).
         po = p;
         if opts.ekf && all(isfinite(pe)), po = pe; end
+        % Pin engages on IMU stillness OR, as a fallback for a jittery IMU, a
+        % calm solve: low fit residual AND near-zero EKF speed. The fallback
+        % lets a genuinely-parked tag pin even when the BNO085 will not settle
+        % under the stillness thresholds; it releases the instant the solve
+        % gets noisy or the tag actually moves.
+        calm = isfinite(info.rmse) && info.rmse < opts.pinResid && ...
+               opts.ekf && ekf.initialized && norm(ekf.vel) < opts.pinVel;
+        pinnable = still || calm;
         pinned = false;
-        if opts.pin && still && all(isfinite(po))
+        if opts.pin && pinnable && all(isfinite(po))
             if any(~isfinite(pinPos)), pinPos = po; pinOut = 0; end
             if norm(po - pinPos) < opts.pinRadius
                 pinOut = 0;
@@ -239,7 +253,7 @@ while ishandle(fig)
             tRate(end+1) = s.thost; %#ok<AGROW>
             tRate(tRate < s.thost - 10) = [];
             set(trailH, 'XData', trail(:, 1), 'YData', trail(:, 2));
-            set(dotH, 'XData', p(1), 'YData', p(2));
+            set(dotH, 'XData', disp_(1), 'YData', disp_(2));   % pinned/EKF value
             % Grow the view if the tag wanders outside it
             xl = xlim(ax); yl = ylim(ax);
             if p(1) < xl(1) || p(1) > xl(2) || p(2) < yl(1) || p(2) > yl(2)
