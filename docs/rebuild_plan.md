@@ -75,11 +75,16 @@ better ranges.
    (still) + arrival cost. **Verdict:** MOTION 40–44% smoother than the EKF (jerk
    0.34–0.38 vs 0.49–0.61) for +8 mm lag, 3 ms/solve median (live-feasible at 5 Hz);
    STATIC a tie (median wander 55 vs 54 mm, RMSE 61 vs 64 mm — MHE marginally better).
-   Two warts: intermittent output jumps on 2/19 spots (S8 wander 248 mm — IPOPT landing
-   on different near-optimal solutions step-to-step; RMSE stays fine so mean is right,
-   not ZUPT-fixable) and a solve-time tail (p95 29 ms, max 61 ms). Not default-ready
-   until a jump-guard + solve-tail are addressed; the motion smoothness is a real win.
-   Committed e2ab0d5/eefa215.
+   Warts: a couple of static spots (S8) show ~0.23 m slow drift where the breathing
+   pulls the window — RMSE stays fine (mean is right), and it is NOT sudden jumps so the
+   guard doesn't remove it; a solve-time tail (p95 30 ms, max 90 ms, still < the 200 ms
+   live budget). Added a jump-guard (maxJump 0.20 m: reject an output that leaps beyond
+   the CV prediction or a non-converged solve → fall back to the raw fix, reseed the
+   window; prevents the divergence cascade). **WIRED as opt-in:** live_tag(estimator="mhe",
+   horizon=10) — default stays EKF; the EKF keeps running for stillness + the pin's
+   velocity gate, MHE just supplies the display fix. Committed e2ab0d5/eefa215/<this>.
+   NEXT if pursued: the S8 static-drift (tighter arrival cost / stronger ZUPT) and the
+   solve-tail; otherwise it is a validated experimental smoother for motion.
 2. **Reflash tag 240** with the Phase-C read fixes (ac5743c: SAR temp/Vbat constant
    −132 °C; CFO read after RX re-arm → ~0). Review `git show ac5743c`, recompile, flash.
    Needed only when we return to the slow-drift diagnostics. 5 min.

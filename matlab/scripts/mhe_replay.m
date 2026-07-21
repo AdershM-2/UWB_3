@@ -67,8 +67,9 @@ for i = 1:N
 end
 
 st = solveT(~isnan(Pmhe(:,1)) & (1:N)' > opts.horizon);
-fprintf('\nMHE solve time: median %.1f ms, p95 %.1f ms, max %.1f ms  (horizon %d)\n', ...
-    1000*median(st,'omitnan'), 1000*prctile(st,95), 1000*max(st), opts.horizon);
+fprintf('\nMHE solve time: median %.1f ms, p95 %.1f ms, max %.1f ms  (horizon %d); jump-guard trips: %d/%d\n', ...
+    1000*median(st,'omitnan'), 1000*prctile(st,95), 1000*max(st), opts.horizon, ...
+    mhe.nJumps, mhe.nSolves);
 
 t = thost - thost(1);
 sp = [0; vecnorm(diff(Pekf),2,2)] ./ max([1;diff(t)],1e-3);

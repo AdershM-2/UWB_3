@@ -34,6 +34,13 @@ arguments
                                           % full anchor geometry when anchors
                                           % miss a sweep (no subset jumps)
     opts.ekf (1,1) logical = true         % FusionEkf smoothing on the display
+    opts.estimator string = "ekf"         % "ekf" (default) or "mhe" = experimental
+                                          % Moving Horizon Estimator (CasADi/IPOPT,
+                                          % ~40% smoother in motion). The EKF still
+                                          % runs for stillness + the pin's velocity
+                                          % gate; MHE just provides the display fix.
+    opts.horizon (1,1) double = 10        % MHE window length (sweeps)
+    opts.casadiPath string = "C:\Users\itisa\Downloads\casadi-3.7.0"
     opts.mode string = "pos"              % "pos" = fix updates (robust);
                                           % "ranges" = tightly-coupled with
                                           % per-anchor bias MEMORY: no position
@@ -116,7 +123,15 @@ if opts.mode == "ranges"
     ekf.enableRangeBias(numel(A.ids));   % per-anchor bias memory
 end
 rh = dune.RangeHold();
-tPrevEkf = NaN;
+mhe = [];
+if opts.estimator == "mhe"
+    if isfolder(opts.casadiPath), addpath(char(opts.casadiPath)); end
+    mhe = dune.MheEstimator(A.pos);
+    mhe.horizon = opts.horizon; mhe.tagZ = opts.tagZ;
+    mhe.build();
+    fprintf('MHE estimator on (horizon %d, CasADi/IPOPT).\n', opts.horizon);
+end
+tPrevEkf = NaN; tPrevMhe = NaN;
 histA = nan(1, 8); histG = nan(1, 8);   % rolling stillness window (IMU ZUPT)
 stillCnt = 0;                            % UWB-only stillness (no-IMU tags)
 divergeStreak = 0;
@@ -215,6 +230,19 @@ while ishandle(fig)
                 end
             end
             if ekf.initialized, pe = ekf.pos; end
+        end
+        % Experimental MHE: sliding-window smoother provides the display fix
+        % (the EKF above still runs for stillness + the pin's velocity gate).
+        if ~isempty(mhe)
+            dtm = 0;
+            if isfinite(tPrevMhe), dtm = min(max(s.thost - tPrevMhe, 0), 1); end
+            tPrevMhe = s.thost;
+            [pm, ~, mi] = mhe.push(info.rangeCorr, info.w, max(dtm, 1e-3), p, still);
+            if ~mi.warmup && all(isfinite(pm))
+                pe = pm;                 % MHE output feeds the pin/smoother/display
+            elseif all(isfinite(p))
+                pe = p;                  % warm-up: fall back to the raw fix
+            end
         end
         % Output pin (deadband): while parked the true position is constant,
         % so any sub-radius movement of the estimate is breathing, not motion

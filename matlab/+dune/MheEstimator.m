@@ -33,6 +33,9 @@ classdef MheEstimator < handle
         arrivalVel = 0.6       % arrival-cost sigma, velocity (m/s)
         huberDelta = 0.15      % robust range-residual threshold (m)
         zuptSigma  = 0.03      % zero-velocity pseudo-meas sigma when still (m/s)
+        maxJump    = 0.20      % m, jump-guard: reject output leaps beyond the
+                               % CV prediction by more than this (IPOPT can land
+                               % on a different near-optimal solution step-to-step)
         maxIter   = 60
     end
     properties (SetAccess = private)
@@ -44,7 +47,9 @@ classdef MheEstimator < handle
         Xw = []                % last window solution, 4N x 1
         prior = []             % arrival target [px py vx vy]'
         lastP = [NaN NaN]
+        lastV = [0 0]
         nSolves = 0
+        nJumps = 0
     end
 
     methods
@@ -100,7 +105,8 @@ classdef MheEstimator < handle
         end
 
         function reset(obj)
-            obj.buf = {}; obj.Xw = []; obj.prior = []; obj.lastP = [NaN NaN];
+            obj.buf = {}; obj.Xw = []; obj.prior = [];
+            obj.lastP = [NaN NaN]; obj.lastV = [0 0];
         end
 
         function [p, v, info] = push(obj, z, w, dt, pHint, still)
@@ -149,16 +155,52 @@ classdef MheEstimator < handle
 
             r = obj.solver('x0', X0, 'p', Pv);
             X = full(r.x);
-            obj.Xw = X;
             obj.nSolves = obj.nSolves + 1;
             Xm = reshape(X, 4, N);
             p = Xm(1:2,end)'; v = Xm(3:4,end)';
-            obj.prior = Xm(:,2);                        % next window's arrival target
-            obj.lastP = p;
-            info.warmup = false;
-            info.cost = full(r.f);
             st = obj.solver.stats();
+            solveOk = ~isfield(st, 'success') || st.success;
+
+            info.warmup = false; info.cost = full(r.f); info.jumped = false;
             if isfield(st, 'iter_count'), info.iters = st.iter_count; end
+
+            % Jump-guard: reject an output that leaps from its own constant-
+            % velocity prediction by more than maxJump (or a non-converged
+            % solve) -> fall back to the raw fix if sane, else the CV
+            % prediction, and reseed the window so the bad solution does not
+            % propagate through the arrival prior.
+            if all(isfinite(obj.lastP)) && ...
+               (~solveOk || norm(p - (obj.lastP + obj.lastV * dt)) > obj.maxJump)
+                % Fall back to the raw fix (measurement-anchored, cannot run
+                % away); only dead-reckon on the CV prediction if there is no
+                % fix this sweep. Velocity is kept so the smoother continues.
+                if all(isfinite(pHint))
+                    p = pHint;
+                else
+                    p = obj.lastP + obj.lastV * dt;
+                end
+                v = obj.lastV;
+                obj.reseedWindow(p, v, DTv);
+                obj.nJumps = obj.nJumps + 1;
+                info.jumped = true;
+            else
+                obj.Xw = X;
+                obj.prior = Xm(:,2);                    % next window's arrival target
+            end
+            obj.lastP = p; obj.lastV = v;
+        end
+
+        function reseedWindow(obj, p, v, DTv)
+            % Rebuild the window as a clean CV trajectory ending at (p,v) so a
+            % rejected solve does not poison the next warm start / arrival prior.
+            N = obj.horizon; dt = mean(DTv);
+            Xm = zeros(4, N);
+            for k = 1:N
+                Xm(1:2,k) = p(:) - v(:) * (N - k) * dt;
+                Xm(3:4,k) = v(:);
+            end
+            obj.Xw = Xm(:);
+            obj.prior = Xm(:,2);
         end
     end
 end
