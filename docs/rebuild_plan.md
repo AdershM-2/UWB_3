@@ -64,15 +64,18 @@ goal: moving-tag performance. Run motion tests first; the remaining static exper
 better ranges.
 
 **Pending, in order (what we do next):**
-1. **Motion test (NOW).** Drive the tag by hand, live_tag running, and watch/log the
-   moving behaviour that actually matters: (a) the pin RELEASES cleanly the moment the
-   tag moves and the dot follows; (b) ~50 cm moves in each direction read back as ~50 cm;
-   (c) a hand-drawn curve comes out as a smooth curve, not a lagging/overshooting mess;
-   (d) it re-pins when the tag stops. No Kinect truth yet — known-distance moves + shape
-   are the poor-man's truth. Analyser staged (motion_check.m): segments still/moving,
-   per-move displacement, EKF-vs-raw lag, pin behaviour. → tells us if ZUPT/stillness
-   thresholds and CV process noise need retuning (7.5 territory) BEFORE building the
-   Kinect recorder.
+1. **Motion test** ✅ DONE 2026-07-21 (log 202505): pin works (81% while still, 0 mm
+   output scatter), ~50 cm moves read 0.44–0.58 m, moving track was jagged. Smoothed via
+   an output EMA (opts.smooth 0.6: ~50% less jerk for ~25 mm lag; CV process-noise tuning
+   was a poor lever, 13% for 3× lag). motion_check.m analyser committed.
+1b. **Experimental: Moving Horizon Estimator (MHE)** ◀ IN PROGRESS. CasADi 3.7.0 + IPOPT
+   (C:\Users\itisa\Downloads\casadi-3.7.0). Sliding window of N sweeps; decision vars =
+   the whole [p,v] trajectory; cost = robust (pseudo-Huber) per-anchor range fit +
+   constant-velocity process model + arrival cost. vs the EKF's snap-to-latest-fix it
+   re-linearises the geometry over the window, smooths structurally, and rejects outliers
+   smoothly. Offline A/B vs EKF on the motion log + static campaign (dune.MheEstimator,
+   mhe_replay.m) BEFORE any live wiring; report smoothness/lag/wander + per-sweep solve
+   time (live feasibility). Then decide whether to offer it in live_tag.
 2. **Reflash tag 240** with the Phase-C read fixes (ac5743c: SAR temp/Vbat constant
    −132 °C; CFO read after RX re-arm → ~0). Review `git show ac5743c`, recompile, flash.
    Needed only when we return to the slow-drift diagnostics. 5 min.
