@@ -34,10 +34,16 @@ proved it is time-varying — no static map can absorb it; catch the source, don
   poison bias memory); stillInvert kept default-off.
 - ~~D1 metronomic-cadence dwell~~ — obsoleted by A1's offline rejection of cadence.
 
+**Phase B — CIR snapshots** ✅ DONE 2026-07-21 (sets cir_20260721_194042 A5 quiet,
+194227 A4 quiet, 194423 A4 walking): **channel/LDE branch confirmed.** First path is
+~20 dB BELOW the channel peak on both links (fp/peak 0.07–0.11; A4's dominant arrival
+at +25 taps ≈ 7.5 m excess path; A5 = dense tail right behind the edge), edge only
+8–10 dB above pre-cursor noise — ground-grazing/Fresnel regime, cm-level LDE wander
+expected. A5 is pathological (worst edge at only 2.3 m + high failure rate) → inspect/
+reposition/board-swap. Quiet room already wanders (A4 p2p 132 mm/81 s) ≈ walking run —
+body motion NOT required. Not clock/timing. → D2 raised anchors is the fix candidate.
+
 **Pending** (in order):
-- **Phase B — CIR snapshots** ◀ NEXT, user-side (tag-240 reflash staged, idle()-fix 1c10187):
-  cir_capture quiet dwell / walking dwell / far anchor. Fork: leading edge breathes with
-  residual (channel/LDE — A2 predicts this) vs edge frozen while range wanders (timing).
 - **Phase C — free observables**: firmware STAGED awaiting user review, then flash tag 240
   (RTLS v4: per-anchor CFO + realised exchange-start ms; DIAG die-temp/Vbat tail; parser +
   JSONL done) → locked-room long dwell (Kinect timestamps intrusions) → correlate vs
