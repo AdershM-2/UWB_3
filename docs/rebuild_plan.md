@@ -47,36 +47,47 @@ without A5): A5 is the worst breather (slow range p2p ~122 mm, 2–3× the other
 weights already suppress it — dropping it wins only ~15–20% wander and costs geometry.
 Every anchor breathes 40–92 mm ⇒ constellation-wide edge problem, keep all 5.
 
-**Output pin** ✅ SHIPPED 2026-07-21 (user request, ac5743c): live_tag freezes the
-REPORTED position while parked and inside a 5 cm deadband (release on motion or
-sustained excursion). Display/log-level only — masks the parked wobble, does not fix
-ranges. Moving-tag stability still needs the physics fixed.
+**Output pin** ✅ SHIPPED 2026-07-21 (user request, ac5743c + 2e27ec5): live_tag freezes
+the REPORTED position while parked and inside a 5 cm deadband (release on motion or
+sustained excursion). Fix 2e27ec5: the red dot now follows the pinned value (was drawn
+at the raw solve), and the pin also engages on a calm solve (residual < 6 cm AND EKF
+speed < 8 cm/s), not only IMU stillness. Display/log-level only — masks the parked
+wobble, does not fix ranges. Moving-tag stability still needs the physics fixed.
 
 _Constraint (user, 2026-07-21): anchors CANNOT be raised (~fixed installation).
 The tag CAN be raised → D2 becomes a raised-TAG experiment._
 
+**DECISION 2026-07-21 (user):** the wobble investigation is good enough for now — the
+static residual is characterised and the parked display is pinned. Pivot to the ACTUAL
+goal: moving-tag performance. Run motion tests first; the remaining static experiments
+(reflash, raised-tag, A5, locked-room) are DEFERRED until the motion tests say we need
+better ranges.
+
 **Pending, in order (what we do next):**
-1. **Reflash tag 240** with the two Phase-C read fixes (ac5743c: SAR temp/Vbat was never
-   converting → constant −132 °C; CFO integrator read after the receiver re-armed → ~0).
-   User reviews `git show ac5743c`, recompiles TagWrover, flashes. 5 min.
-2. **Raised-TAG test (replaces D2).** Park the tag at one marked spot at normal height
-   (0.24 m) for ~3 min, then put the SAME tag on a box/pole ~0.8–1 m at the SAME (x,y)
-   for ~3 min, cir_capture A4 + A5 at both heights. Raising one end steepens the floor-
-   bounce angle (weaker reflection) and strengthens the direct ray, so the leading edge
-   should sharpen (fp/peak up) and breathing shrink. If it does → permanent fix = short
-   mast for the dual-tag plate on the rover (tagZ + truth clicks change, one recalib).
-   ~20 min, no firmware.
-3. **A5 link inspection.** Its edge is the worst at only 2.3 m: look for metal/clutter
-   near A5, try turning/moving it slightly, or swap the board with a spare to rule out
-   the board. Re-check with cir_capture A5. ~15 min.
-4. **Locked-room long dwell (Phase C payoff).** After step 1: tag parked, room empty,
-   30–60 min live_tag log → correlate per-anchor range vs die temp, CFO, cadence over
-   a long window. Closes out slow-drift hypotheses with real data. Passive.
-5. **Later / only if justified:** D3 channel 2/5 alternation (needs all-board reflash +
-   per-channel calibration — only if the raised-tag test says carrier-dependent
-   multipath); D4 continuous CIR tail for error models; E TX-power boost (manual
-   TX_POWER register, ~+10 dB, bench-only, ~1 h recalibration — only if the edge stays
-   noisy after the geometry fixes). Broadcast-POLL (step 6) and E both pushed later.
+1. **Motion test (NOW).** Drive the tag by hand, live_tag running, and watch/log the
+   moving behaviour that actually matters: (a) the pin RELEASES cleanly the moment the
+   tag moves and the dot follows; (b) ~50 cm moves in each direction read back as ~50 cm;
+   (c) a hand-drawn curve comes out as a smooth curve, not a lagging/overshooting mess;
+   (d) it re-pins when the tag stops. No Kinect truth yet — known-distance moves + shape
+   are the poor-man's truth. Analyser staged (motion_check.m): segments still/moving,
+   per-move displacement, EKF-vs-raw lag, pin behaviour. → tells us if ZUPT/stillness
+   thresholds and CV process noise need retuning (7.5 territory) BEFORE building the
+   Kinect recorder.
+2. **Reflash tag 240** with the Phase-C read fixes (ac5743c: SAR temp/Vbat constant
+   −132 °C; CFO read after RX re-arm → ~0). Review `git show ac5743c`, recompile, flash.
+   Needed only when we return to the slow-drift diagnostics. 5 min.
+3. **Raised-TAG test (replaces D2, deferred).** Same tag at 0.24 m vs ~0.8–1 m at the
+   SAME (x,y); cir_capture A4+A5 at both heights. Steeper floor-bounce angle should
+   sharpen the edge (fp/peak up) and shrink breathing → permanent fix = short mast on
+   the rover plate. ~20 min, no firmware.
+4. **A5 link inspection (deferred).** Worst edge at only 2.3 m: check for metal/clutter,
+   rotate/move it, or board-swap; re-check with cir_capture A5. ~15 min.
+5. **Locked-room long dwell (deferred, needs step 2 first).** Tag parked, room empty,
+   30–60 min log → correlate per-anchor range vs die temp, CFO, cadence. Passive.
+6. **Later / only if justified:** D3 channel 2/5 alternation (all-board reflash +
+   per-channel calibration — only if raised-tag says carrier-dependent multipath);
+   D4 continuous CIR tail; E TX-power boost (manual TX_POWER, ~+10 dB, bench-only,
+   ~1 h recalibration). Broadcast-POLL (step 6) and E both pushed later.
 
 ## Steps
 1. **Hardware** — ✅ DONE.
