@@ -18,9 +18,17 @@ M-estimation, stillMode, per-anchor bias states, RangeHold) — anchor-dropout j
 6–10 mm. **Remaining error: slow ~5–7 cm per-anchor "breathing" at fixed position — the
 active investigation below (expert-reviewed 2026-07-21).**
 
-## ACTIVE: wobble root-cause investigation (before 7.3)
-Remaining error: slow ~5–7 cm per-anchor breathing at fixed position. The oracle test
+## PARKED (2026-07-21): wobble root-cause investigation + broadcast-POLL
+**Decision (user, 2026-07-21):** the parked wobble is characterised well enough (Phase A/B
+done, source = per-link ground-grazing/LDE physics; pinned + smoothed at the output). Set
+aside the REMAINING investigation items below (reflash, raised-tag, A5, locked-room, D3/D4/E)
+AND broadcast-POLL (step 6) for now — they are documented and resumable. **Active work moves
+to step 7.3 (two tags).** 7.4 Kinect accuracy validation stays later (overall comparison).
+
+_Remaining error: slow ~5–7 cm per-anchor breathing at fixed position. The oracle test
 proved it is time-varying — no static map can absorb it; catch the source, don't smooth it.
+The output pin + EMA + MHE mask it for display/logging; the physics fixes below would
+actually reduce it if we return to them._
 
 **Ruled out so far** (details: docs/phase_a_findings.md, docs/wobble_mitigation_summary.md):
 - ~~Estimator layer~~ — at its floor (reviewer + A3; nine mitigations already shipped:
@@ -151,10 +159,20 @@ better ranges.
    - 7.1 ✅ tag-241 delay tuned (tune_tag_delay).
    - 7.2 ✅ FusionEkf ported + validated offline (robust updates, stillMode, bias states);
      IMU accel prediction OFF until 7.3 frame validation.
-   - 7.3 ◀ NEXT after investigation: dual-port live app (240=COM12, 241=COM11), yaw from
-     the 0.48 m baseline vs BNO085 yaw (validates IMU frame → re-enable useImuAccel);
-     also gives the dual-tag parked discriminator for the investigation.
-   - 7.4 Kinect moving-truth recorder (AprilTag → world CSV, t_host-synced).
+   - 7.3 ◀ **ACTIVE NEXT (new chat): two-tag / rigid-body.** Handoff prompt:
+     docs/handoff_two_tags.md. Both tags report to the host at once — but they CANNOT both
+     be on USB, so transport must go over **WiFi/UDP** (HostLink has a UDP path; UDP was
+     blocked on iitk — resolve via a phone hotspot / dedicated AP, verify first). Host
+     demuxes by tag_id (ingest is already tag-agnostic). Deliver: (a) dual-tag live ingest;
+     (b) **yaw from the rigid baseline** (atan2 of tag1→tag2) vs the BNO085 IMU yaw —
+     redundant with the IMU but validates the rotated IMU frame; (c) exploit the **fixed
+     inter-tag distance as a solver constraint** (rigid-body joint solve / MHE rigid-body:
+     state [cx cy psi speed], both tags' ranges constrain centre+yaw, gyro drives psi,
+     unicycle no-slip ties velocity to psi — the natural extension of model="unicycle").
+     Re-measure the true baseline (physical 0.50 m, fitted 0.53 — it is now a hard
+     constraint, so measure antenna-centre to antenna-centre precisely).
+   - 7.4 Kinect moving-truth recorder (AprilTag → world CSV, t_host-synced) — LATER, for
+     overall accuracy comparison of EKF vs MHE(cv/unicycle) vs rigid-body.
    - 7.5 Moving validation: trajectories vs Kinect truth → RMSE ≤ 8 cm goal +
      STABILITY metrics first-class (parked wander, subset-jump size, per-anchor range
      consistency) + yaw accuracy; recalibrate ZUPT/stillness thresholds with labelled
