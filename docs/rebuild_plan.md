@@ -159,50 +159,43 @@ better ranges.
    - 7.1 ✅ tag-241 delay tuned (tune_tag_delay).
    - 7.2 ✅ FusionEkf ported + validated offline (robust updates, stillMode, bias states);
      IMU accel prediction OFF until 7.3 frame validation.
-   - 7.3 ◀ **IN PROGRESS: two-tag / rigid-body.** Handoff: docs/handoff_two_tags.md.
-     - Task 1 TRANSPORT ✅ 2026-07-21: the firmware ALREADY UDP-broadcasts every sweep;
-       only the host side was missing. Added dune.TagUdp (Java DatagramSocket — udpport
-       needs the Instrument Control Toolbox, not installed) + udp_probe. VERIFIED: BOTH
-       tags reach the host over WiFi/UDP (~3 Hz each, 5 anchors; 240=172.29.108.220,
-       241=172.29.109.27, host 172.29.108.246). The iitk UDP block did NOT bite — no
-       firmware change / hotspot needed.
-     - Tasks 2+3 DUAL DISPLAY + YAW ✅ 2026-07-21 (live_dual_tag): both tags demuxed on
-       one socket, per-tag solve+EKF, rigid baseline drawn, baseline yaw (atan2 of
-       tag_hi−tag_lo) vs IMU yaw + circular-mean offset, logs dual_log/dual_yaw. Validated
-       live with BOTH tags — rig behaves rigid (constant inter-tag distance, coupled
-       motion). IMU currently silent on tag 240 (fixable connection issue; only the
-       TagWrover tag 240 has a BNO085) so yaw-vs-IMU is deferred, baseline yaw works now.
-     - MEASURED BASELINE (parked, log dual_log_20260721_222016, 82 nearest-time pairs):
-       independent solves give L = 0.317 m mean (median 0.315, std 29 mm, p2p 162 mm).
-       Tags were physically ~30 cm apart (NOT the old 0.50 m) → the 0.317 m MATCHES to
-       ~2 cm, i.e. no systematic bias; the 29 mm wander is the per-anchor breathing showing
-       in the baseline. STILL NEEDED: a precise tape measure (antenna-centre to
-       antenna-centre) as the hard constraint L; placement is currently ad-hoc ~30 cm.
-     - Task 4 RIGID SOLVER ✅ built 2026-07-21: dune.rigidSolve (hard constraint — L baked
-       into the parameterisation p = c ± (L/2)[cosψ,sinψ]; LM over [cx cy psi]; reuses
-       solveSweep weights). Offline on the parked log: baseline std 36 mm → exact, centre
-       wander −15%, yaw std 7.1→5.6°, range rmse 61→70 mm (expected 3-DOF cost). Wired
-       into live_dual_tag (purple centre + heading arrow, yawRig logged). rigid_replay.m
-       compares indep vs rigid on any udp_raw log. Rigid-body MHE (temporal, gyro→psi,
-       no-slip) NOT started — wait for IMU fix + 7.4 truth.
-     - ⚠ END-OF-DAY STATE (2026-07-21 evening): the LAST FULLY RELIABLE config is
-       single-tag live_tag over COM (+ MHE unicycle). The dual-tag live run DEGRADED in a
-       later session: dots slid apart / away (screenshot ~3.5 m apart at ~30 cm true).
-       Diagnosed so far (udp_raw/dual_log_20260721_223629 + diag replay):
-       1. A1 & A2 stopped answering mid-run → most sweeps only A3/A4/A5, rx weak
-          (−95…−103 dBm). WHY is open: RF/power/obstruction/connection — check tomorrow.
-       2. A3/A4/A5 are the three TOP-EDGE anchors (y≈2.1–2.3, near-collinear) →
-          multilaterate's degenerate-geometry gate (sv(2)<0.3, multilaterate.m:41)
-          correctly refuses a fix (iters=0, mirror ambiguity). NOT a solver bug.
-       3. With no fixes the per-tag FusionEkf COASTS on its CV prediction (reached
-          (−17,−7)) and live_dual_tag's display FOLLOWS it — my bug: live_tag only moves
-          the dot on a valid raw fix; live_dual_tag dropped that guard. FIX FIRST
-          TOMORROW (guard display on finite raw p + reinit EKF after a long coast).
-       4. The rigid centre stayed CORRECT throughout (re-solves from both tags' ranges
-          jointly — 6 measurements, less degenerate). Argues for making the rigid solve
-          the primary dual-tag output.
-       TOMORROW: fix (3), then investigate (1) — solver vs wifi vs connection — then
-       re-validate live; tape-measure L; tag-240 IMU (silent, connection suspected).
+   - 7.3 ◀ **PARTIALLY DONE, dual-tag ROLLED BACK on disk.** Handoff:
+     docs/handoff_two_tags.md. History note: tasks 1–4 were built and validated in a later
+     session (commits d174f52…12f4304), then the user DELETED the dual-tag files from the
+     working tree after a bad live run. They remain in git history and are restorable.
+     - Task 1 TRANSPORT ✅ **and now in single-tag live_tag.** The firmware ALREADY
+       UDP-broadcasts every sweep; only the host side was missing. dune.TagUdp (Java
+       DatagramSocket — udpport needs the Instrument Control Toolbox, not installed) +
+       udp_probe. VERIFIED: both tags reached the host over WiFi/UDP (~3 Hz each;
+       240=172.29.108.220, 241=172.29.109.27, host 172.29.108.246). **The old "iitk blocks
+       UDP" note was WRONG — no hotspot or firmware change needed.** 2026-07-22 (commit
+       00d7519): `live_tag(transport="udp", udpPort=4100)` now runs the SINGLE tag over
+       WiFi through the same proven transport; default stays serial. TagUdp + udp_probe are
+       restored on disk; the dual-tag/rigid files are not.
+     - Tasks 2+3 DUAL DISPLAY + YAW ✅ built (live_dual_tag, deleted on disk): both tags
+       demuxed on one socket, per-tag solve+EKF, rigid baseline drawn, baseline yaw
+       (atan2 tag_hi−tag_lo) vs IMU yaw + circular-mean offset. Rig behaved rigid live.
+     - MEASURED BASELINE: independent solves gave L = 0.317 m (median 0.315, std 29 mm)
+       with the tags physically ~30 cm apart → matches to ~2 cm, no systematic bias; the
+       29 mm wander is the per-anchor breathing. **STILL NEEDED: a precise tape measure
+       (antenna-centre to antenna-centre) as the hard constraint L** — placement is ad-hoc.
+     - Task 4 RIGID SOLVER ✅ built (dune.rigidSolve, deleted on disk): hard constraint
+       p = c ± (L/2)[cosψ,sinψ], LM over [cx cy ψ], reuses solveSweep weights. Offline on
+       the parked log: baseline std 36 mm → exact, centre wander −15%, yaw std 7.1→5.6°,
+       range rmse 61→70 mm (expected 3-DOF cost). Rigid-body MHE (temporal, gyro→ψ,
+       no-slip) NOT started.
+     - ⚠ **WHY DUAL-TAG WAS ROLLED BACK** (diagnosed, and largely already addressed):
+       1. **A1 & A2 stopped answering mid-run** → only A3/A4/A5 left, which are the three
+          TOP-EDGE anchors (y≈2.1–2.3, near-collinear) → multilaterate's degenerate-geometry
+          gate (sv(2)<0.3, multilaterate.m:41) correctly refused a fix. NOT a solver bug.
+          → **2026-07-22: batteries recharged; A2 was confirmed dead (0/34 sweeps) and
+          live_tag now shows per-anchor freshness (red marker + "MISS: A2"), so this
+          failure mode is now visible immediately.** Likely the real root cause.
+       2. **live_dual_tag display bug (real, unfixed):** with no valid fix the per-tag EKF
+          coasts on its CV prediction and the display FOLLOWED it (dots slid ~3.5 m apart
+          at ~30 cm true). live_tag guards the dot on a finite raw fix; live_dual_tag
+          dropped that guard. **Fix before re-enabling dual-tag:** guard the display on a
+          finite raw fix + reinit the EKF after a long coast.
    - 7.4 Kinect moving-truth recorder (AprilTag → world CSV, t_host-synced) — LATER, for
      overall accuracy comparison of EKF vs MHE(cv/unicycle) vs rigid-body.
    - 7.5 Moving validation: trajectories vs Kinect truth → RMSE ≤ 8 cm goal +
@@ -217,9 +210,7 @@ better ranges.
   tag (DTR) → boot banner shows each connect's delay source.
 - Firmware changes need discussion before reflash; keep libraries/UwbRtls synced with the
   Arduino-path copy on EVERY library change.
-- Transport: serial/COM (single tag) OR WiFi/UDP (dune.TagUdp, both tags at
-  once). UDP VERIFIED working on the current network 2026-07-21 (the old iitk
-  broadcast block did not bite; no firmware change / hotspot needed).
+- Transport: serial/COM only (UDP blocked on iitk WiFi).
 - Radio: MODE_LONGDATA_RANGE_ACCURACY (110 kb/s, PRF 64, long preamble), CHANNEL_5.
   Driver applies the APS011 power-bias table on every RX timestamp (always on).
 
