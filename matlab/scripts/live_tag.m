@@ -108,7 +108,10 @@ fprintf('Logging to %s\n', logFile);
 %% Figure
 fig = figure('Name', sprintf('DUNE live tag - %s', ts.port), 'NumberTitle', 'off');
 ax = axes(fig); hold(ax, 'on'); axis(ax, 'equal'); grid(ax, 'on');
-plot(ax, A.pos(:, 1), A.pos(:, 2), 'k^', 'MarkerFaceColor', 'y', 'MarkerSize', 10);
+% Per-anchor markers (scatter so each can recolour by freshness: green =
+% answering, red = not seen for a while).
+anchH = scatter(ax, A.pos(:, 1), A.pos(:, 2), 90, [0 0.6 0], '^', 'filled', ...
+                'MarkerEdgeColor', 'k');
 text(ax, A.pos(:, 1) + 0.05, A.pos(:, 2), compose('A%d', A.ids));
 xlim(ax, [min(A.pos(:, 1)) - opts.margin, max(A.pos(:, 1)) + opts.margin]);
 ylim(ax, [min(A.pos(:, 2)) - opts.margin, max(A.pos(:, 2)) + opts.margin]);
@@ -146,6 +149,7 @@ divergeStreak = 0;
 pinPos = [NaN, NaN]; pinOut = 0;        % output-pin (deadband) state
 pinned = false;
 smoothPos = [NaN, NaN];                 % output EMA state (moving smoother)
+missCount = zeros(1, numel(A.ids));     % consecutive sweeps each anchor absent
 
 while ishandle(fig)
     for e = ts.drainEvents()
@@ -154,6 +158,11 @@ while ishandle(fig)
     for c = ts.drain()
         s = c{1};
         nSweeps = nSweeps + 1;
+        % Per-anchor presence (from the RAW sweep, before RangeHold injects
+        % held ranges): reset a counter when the anchor answers, else increment.
+        present = ismember(A.ids, s.ids);
+        missCount(present) = 0;
+        missCount(~present) = missCount(~present) + 1;
         if ~ismember(s.tag, queried)
             queried(end+1) = s.tag; %#ok<AGROW>
             ts.send(sprintf('GETMYDELAY,%d', s.tag));   % report NVS delay state
@@ -302,6 +311,15 @@ while ishandle(fig)
         fprintf(fid, '%s\n', jsonencode(dune.sweepRecord(s, p, info, A, po)));
 
         disp_ = po;
+        % Per-anchor freshness: recolour the markers (green answering, orange
+        % missing a few sweeps, red = dead) and name the dead ones in the title.
+        acol = repmat([0 0.6 0], numel(A.ids), 1);
+        acol(missCount >= 1, :) = repmat([0.95 0.6 0], nnz(missCount >= 1), 1);
+        acol(missCount > 5, :)  = repmat([0.85 0 0], nnz(missCount > 5), 1);
+        set(anchH, 'CData', acol);
+        missStr = '';
+        deadIds = A.ids(missCount > 5);
+        if ~isempty(deadIds), missStr = ['  MISS:' sprintf(' A%d', deadIds)]; end
         if all(isfinite(p)), set(rawH, 'XData', p(1), 'YData', p(2)); end
         if all(isfinite(p))
             nSolved = nSolved + 1;
@@ -325,13 +343,13 @@ while ishandle(fig)
             heldStr = '';
             if nHeld > 0, heldStr = sprintf(' (%d held)', nHeld); end
             ttl.String = sprintf(['tag %d%s   (%.2f, %.2f) m   %.1f Hz   ' ...
-                                  '%d/%d anchors%s   resid %.0f mm   solved %d/%d'], ...
+                                  '%d/%d anchors%s%s   resid %.0f mm   solved %d/%d'], ...
                 s.tag, mode, disp_(1), disp_(2), hz, nnz(info.used), ...
-                nnz(~isnan(info.range)), heldStr, 1000 * info.rmse, ...
+                nnz(~isnan(info.range)), heldStr, missStr, 1000 * info.rmse, ...
                 nSolved, nSweeps);
         else
-            ttl.String = sprintf('tag %d   NO FIX (%d anchors usable)   solved %d/%d', ...
-                s.tag, nnz(~isnan(info.range)), nSolved, nSweeps);
+            ttl.String = sprintf('tag %d   NO FIX (%d anchors usable)%s   solved %d/%d', ...
+                s.tag, nnz(~isnan(info.range)), missStr, nSolved, nSweeps);
         end
     end
     drawnow limitrate
