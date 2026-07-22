@@ -642,17 +642,119 @@ centred coordinates) and \textbf{refuses to answer} below 0.3\,m. This is not
 cosmetic: when two anchors died mid-run and left three nearly-collinear ones, this
 guard was the only honest response (\S\ref{sec:fail-dualtag}).
 
-\textbf{Signal-quality weights.} A radio path with no line of sight shows a
-signature: total received power well above first-path power (energy arriving late,
-via reflections). The gap $p_{\mathrm{rx}} - p_{\mathrm{fp}}$ in dB drives a soft
-weight (\gh{matlab/+dune/gapWeights.m}{gapWeights.m}) so obstructed anchors count
-less without being discarded.
+\textbf{Signal-quality weights} --- covered in full in \S\ref{sec:nlos} below,
+because the story of what the NLOS machinery does (and honestly does not) earn
+deserves more than a paragraph.
 
 The full per-sweep pipeline --- sentinel rejection, power correction, weights,
 solve, diagnostics --- is assembled in
 \gh{matlab/+dune/solveSweep.m}{solveSweep.m}, which is the \emph{single} solve path
 used by every live tool and every replay. One code path means offline results and
 live results can never quietly diverge.
+
+\subsection{Blocked paths: the NLOS machinery in detail}
+\label{sec:nlos}
+
+\subsubsection{The physical signature}
+
+When the straight line from tag to anchor is clear (\emph{line of sight}, LOS),
+most of the received energy arrives in the first instant --- the direct ray. When
+something blocks that line (\emph{non-line-of-sight}, NLOS --- a person, the rover
+body, furniture), the direct ray is attenuated but reflections off walls and floor
+still arrive, \emph{later}, because their paths are longer. The chip reports both
+the total received power $p_{\mathrm{rx}}$ and the power in the earliest-arriving
+component $p_{\mathrm{fp}}$, so the situation is visible in one number:
+\begin{equation}
+g \;=\; p_{\mathrm{rx}} - p_{\mathrm{fp}} \quad [\text{dB}].
+\end{equation}
+
+\begin{plainwords}
+Think of a shout across a courtyard. In the open, the loudest thing you hear is the
+direct shout, and the echoes are quiet afterthoughts: small gap. If a wall blocks
+the shouter, all you hear \emph{is} echoes --- lots of total sound, none of it
+early: large gap. The gap is a blocked-path detector that needs no extra hardware,
+and it is the vendor's own recommended metric (application note APS006). Crucially,
+an NLOS distance is not just noisier --- it is \emph{biased long}, because the
+energy that does arrive travelled a longer path. That is why a blocked anchor
+should count less even before it looks like an outlier.
+\end{plainwords}
+
+One same-frame subtlety in the firmware is worth recording: both powers must be
+read from the \emph{same received frame}. The anchor's report carries a power
+measured on the \emph{other} leg of the exchange; comparing that against the tag's
+own first-path reading would make the gap physically meaningless. The tag therefore
+overwrites the reported value with its own same-frame measurement (see the
+diagnostics block in \gh{libraries/UwbRtls/src/TwrEngine.cpp}{TwrEngine.cpp}).
+
+\subsubsection{From gap to weight}
+
+\gh{matlab/+dune/gapWeights.m}{gapWeights.m} converts the gap into a per-anchor
+trust weight:
+\begin{equation}
+w(g) \;=\;
+\max\!\Big(\,0.05,\; 10^{-\max(0,\; g - 3)/10}\,\Big),
+\qquad w(\text{no diagnostics}) = 1 .
+\end{equation}
+In words: up to a 3\,dB gap the anchor is fully trusted ($w{=}1$; small gaps are
+normal even in LOS). Beyond that, trust falls by a factor of ten for every 10\,dB
+of excess --- mirroring that the gap itself is a logarithmic quantity. The floor of
+0.05 means even a badly obstructed anchor is \emph{de-emphasised, never silently
+discarded}: keeping a whisper of it preserves solve geometry, and the MAD gate
+(\S\ref{sec:solver}) still exists for outright rejection. A missing diagnostic
+(sentinel, \S\ref{sec:protocol}) maps to full weight rather than a fabricated
+suspicion.
+
+\subsubsection{The three places the weight acts}
+
+\begin{enumerate}
+\item \textbf{In the least-squares solve} --- as the $w_k$ of
+      Eq.~\eqref{eq:ls}, inside \gh{matlab/+dune/solveSweep.m}{solveSweep.m}.
+      A blocked anchor bends the position less.
+\item \textbf{In the estimators} --- the same weights ride along as per-range
+      measurement trust: the Kalman filter's tightly-coupled range updates divide
+      the measurement variance by $w_k$, and both moving-horizon estimators take
+      them as $w_{kj}$ in Eq.~\eqref{eq:mhe}, so a suspect range pulls the window
+      more gently.
+\item \textbf{In the position-fix covariance} --- the loosely-coupled Kalman
+      update inflates its measurement noise $R$ by (among other factors) the mean
+      gap of the sweep (the \code{adaptiveR} helper in
+      \gh{matlab/scripts/live\_tag.m}{live\_tag.m} and
+      \gh{matlab/scripts/ekf\_replay.m}{ekf\_replay.m}): a sweep that was
+      obstructed overall is trusted less as a whole.
+\end{enumerate}
+
+\subsubsection{What the ablation honestly showed}
+
+Good machinery still has to survive being switched off. On 19 parked dwells we ran
+the weights off against on: scatter was equal, slow wander was equal, and static
+accuracy was actually \emph{slightly better with the weights off} (48\,mm
+$\to$ 39\,mm median). We kept them on anyway --- a deliberate judgement, recorded
+here so it can be revisited: a parked-room test never exercises the case the
+weights exist for, which is \emph{transient} blocking --- a person stepping between
+tag and anchor, the rover's own body shadowing a link mid-turn. In those moments
+the biased-long range arrives with a large gap attached, and down-weighting it is
+exactly right. The static cost of carrying the weights is a few millimetres; the
+protection is against decimetre-scale transients.
+
+Two relatives of the idea were tried and dropped. A \emph{hard} drop of
+high-gap ranges added nothing over soft weighting in the correction bake-off
+(\S\ref{sec:powerbias}) --- unsurprising in hindsight, since the floor-weighted
+soft version already contains it. And the chip's separate ``receive quality''
+metric turned out to duplicate what power already says (correlation 0.52 with
+error, essentially nothing beyond it) and was crossed off.
+
+\subsubsection{And the CIR? Diagnosis only --- so far}
+
+The channel impulse response of \S\ref{sec:breathing} is the \emph{full} version
+of the story the gap summarises in one number: energy per $\approx$30\,cm of path,
+tap by tap. It would be natural to ask whether it feeds the pipeline. It does not
+--- its one use was diagnostic, and it was decisive there (it settled the parked
+drift's root cause). Two designed-but-deferred uses sit in the plan: streaming a
+short CIR tail with every exchange to fit a \emph{per-reading error model} (predict
+each range's error from the echo shape, rather than from power alone), and
+revisiting the learned power correction of \S\ref{sec:fail-ml} with CIR features
+once dense moving truth exists. The CIR-as-input idea is arguably the most
+promising unexploited item in the backlog.
 
 \section{The static baseline, and an important ceiling}
 \label{sec:static}
