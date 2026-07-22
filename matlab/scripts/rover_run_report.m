@@ -14,6 +14,7 @@ arguments
     matFile string = ""
     opts.casadiPath string = "C:\Users\itisa\Downloads\casadi-3.7.0"
     opts.runMhe (1,1) logical = true
+    opts.plot (1,1) logical = true
 end
 
 if isfolder(opts.casadiPath), addpath(char(opts.casadiPath)); end
@@ -123,6 +124,7 @@ if sum(good) > 20 && numel(tT) > 20
 end
 
 %% ---- plots -------------------------------------------------------------
+if ~opts.plot, return; end
 fig = figure('Position',[30 30 1500 900]);
 tiledlayout(2,3,'TileSpacing','compact','Padding','compact');
 
