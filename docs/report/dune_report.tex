@@ -1,699 +1,1451 @@
-% DUNE UWB — Work Report
-% Compile: pdflatex dune_report.tex  (run twice for the table of contents)
+% ============================================================================
+% DUNE UWB — full technical documentation / work report
+% Compile: pdflatex dune_report.tex   (run twice for TOC and references)
+% Figures live in ./figures (committed to the repo).
+% ============================================================================
 \documentclass[11pt,a4paper]{article}
 
-\usepackage[margin=2.4cm]{geometry}
+% ---------- layout & typography ----------
+\usepackage[margin=2.3cm,headheight=14pt]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage{parskip}
 \usepackage{amsmath,amssymb}
 \usepackage{booktabs}
-\usepackage{longtable}
 \usepackage{graphicx}
+\usepackage{caption}
+\captionsetup{font=small,labelfont=bf,margin=0.8cm}
+\usepackage{enumitem}
+\setlist{topsep=2pt,itemsep=2pt}
+
+% ---------- colour scheme ----------
 \usepackage{xcolor}
-\usepackage[hidelinks]{hyperref}
-\usepackage{parskip}
+\definecolor{dune}{RGB}{20,60,110}        % headline blue
+\definecolor{dunelight}{RGB}{232,240,250} % pale blue fill
+\definecolor{okgreen}{RGB}{20,110,60}
+\definecolor{oklight}{RGB}{232,246,238}
+\definecolor{warnred}{RGB}{150,40,30}
+\definecolor{warnlight}{RGB}{250,236,232}
+\definecolor{codegray}{RGB}{245,245,245}
 
-\title{\textbf{DUNE: An Indoor Ultra-Wideband Positioning System}\\[2mm]
-\large A record of the work, the reasoning, and the dead ends}
-\author{DUNE project --- UWB\_3}
-\date{22 July 2026}
+% ---------- section styling ----------
+\usepackage{titlesec}
+\titleformat{\part}[display]
+  {\centering\bfseries\huge\color{dune}}{\partname~\thepart}{6pt}{}
+\titleformat{\section}{\Large\bfseries\color{dune}}{\thesection}{0.8em}{}
+\titleformat{\subsection}{\large\bfseries\color{dune!80!black}}{\thesubsection}{0.8em}{}
+\titleformat{\subsubsection}{\normalsize\bfseries}{\thesubsubsection}{0.8em}{}
 
+% ---------- header / footer ----------
+\usepackage{fancyhdr}
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\small\color{dune}DUNE UWB --- technical report}
+\fancyhead[R]{\small\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+
+% ---------- callout boxes ----------
+\usepackage[most]{tcolorbox}
+\newtcolorbox{plainwords}{colback=dunelight,colframe=dune,breakable,
+  title=\textbf{In plain words},fonttitle=\small,left=2mm,right=2mm,top=1mm,bottom=1mm}
+\newtcolorbox{tryit}{colback=oklight,colframe=okgreen,breakable,
+  title=\textbf{Try it yourself},fonttitle=\small,left=2mm,right=2mm,top=1mm,bottom=1mm}
+\newtcolorbox{pitfall}{colback=warnlight,colframe=warnred,breakable,
+  title=\textbf{Pitfall --- this cost us real time},fonttitle=\small,left=2mm,right=2mm,top=1mm,bottom=1mm}
+\newtcolorbox{result}{colback=white,colframe=dune!50,breakable,
+  title=\textbf{Measured result},fonttitle=\small,left=2mm,right=2mm,top=1mm,bottom=1mm}
+
+% ---------- code listings ----------
+\usepackage{listings}
+\lstset{
+  language=Matlab, basicstyle=\ttfamily\small, backgroundcolor=\color{codegray},
+  keywordstyle=\color{dune}\bfseries, commentstyle=\color{okgreen}\itshape,
+  stringstyle=\color{warnred}, showstringspaces=false, breaklines=true,
+  frame=single, rulecolor=\color{black!20}, xleftmargin=2mm, framexleftmargin=2mm,
+  aboveskip=6pt, belowskip=6pt, columns=fullflexible, keepspaces=true
+}
+
+% ---------- links ----------
+\usepackage[colorlinks=true,linkcolor=dune,urlcolor=dune!70!black,citecolor=dune]{hyperref}
+% \gh{repo-path}{displayed name} -> hyperlink into the public GitHub repo
+\newcommand{\gh}[2]{\href{https://github.com/AdershM-2/UWB_3/blob/main/#1}{\texttt{#2}}}
+\newcommand{\ghdir}[2]{\href{https://github.com/AdershM-2/UWB_3/tree/main/#1}{\texttt{#2}}}
+\newcommand{\code}[1]{\texttt{#1}}
+
+% ============================================================================
 \begin{document}
-\maketitle
 
-\begin{abstract}
-\noindent
-This report describes a system that measures where a small rover is inside a room,
-to within a few centimetres, using radio distance measurements. Five fixed radio
-``anchors'' sit around the room. One or two ``tags'' ride on the rover. Each tag
-measures its distance to each anchor several times a second, and a computer turns
-those distances into a position. A ceiling camera watching a printed marker on the
-rover provides an independent, trusted measurement that we use to check our answers.
-
-The report is written to be read, not decoded. Equations appear only where they make
-something clearer, and each one is explained in plain words. The final section is a
-deliberately honest list of everything we tried that did not work, because those
-attempts shaped the design as much as the successes did.
-\end{abstract}
+% ---------------- title page ----------------
+\begin{titlepage}
+\centering
+{\color{dune}\rule{\textwidth}{2pt}}\\[14mm]
+{\Huge\bfseries\color{dune} DUNE\\[3mm]}
+{\LARGE Indoor Ultra-Wideband Positioning for a Small Rover\\[10mm]}
+{\large\itshape A complete technical account --- how it works, how to run it,\\
+ why it was built this way, and what failed along the way\\[16mm]}
+\begin{tabular}{rl}
+\textbf{Repository} & \url{https://github.com/AdershM-2/UWB_3}\\[1mm]
+\textbf{Date} & 22 July 2026\\[1mm]
+\textbf{Host software} & MATLAB R2024b\\[1mm]
+\textbf{Radio hardware} & DecaWave DW1000 + ESP32\\
+\end{tabular}\\[16mm]
+\begin{minipage}{0.86\textwidth}
+\small
+This document is written to be \emph{read}, in order, by someone who has never seen
+the project. Every idea is explained in plain sentences before any mathematics
+appears, every equation is translated into words, and every component links to the
+exact source file that implements it. Green boxes contain commands you can run;
+red boxes describe mistakes we made so you do not repeat them.
+\end{minipage}\\[10mm]
+{\color{dune}\rule{\textwidth}{2pt}}
+\end{titlepage}
 
 \tableofcontents
 \newpage
 
-%======================================================================
-\section{What the system does, in one page}
+% ============================================================================
+\part{The system}
+% ============================================================================
 
-A radio tag on the rover talks to five fixed radio anchors. By carefully timing how
-long a radio message takes to fly to an anchor and back, the tag works out how far
-away that anchor is. Radio travels about 30 centimetres every nanosecond, so timing
-must be accurate to a fraction of a nanosecond for centimetre results. This is what
-ultra-wideband (UWB) radio hardware is designed to do.
+\section{The big picture}
+\label{sec:bigpicture}
 
-Once the tag knows its distance to several anchors, finding its position is a
-geometry problem. Each distance says ``I am somewhere on a circle of this radius
-around that anchor.'' With three or more circles, the point where they all nearly
-meet is the answer. They never meet perfectly, because every distance has some error,
-so we look for the point that disagrees with all the measurements as little as
-possible.
+The goal is simple to state: know where a small rover is inside a room, to within a
+few centimetres, many times per second --- and know which way it is pointing.
 
-That single-shot answer is noisy. So we add a second layer that uses time: the rover
-cannot teleport, so a position that jumps a metre between two readings taken a fifth
-of a second apart is wrong. Filters that encode this idea (a Kalman filter, and later
-a moving-horizon estimator) smooth the answer and reject nonsense.
+The tool is ultra-wideband (UWB) radio. Five small radio stations, called
+\textbf{anchors}, are fixed around the room at known positions. One or two radios
+called \textbf{tags} ride on the rover. A tag can measure its distance to an anchor
+by timing how long a radio message takes to fly there and back. Radio moves at the
+speed of light --- about 30\,cm every nanosecond --- so to get centimetres the
+timing must be good to a few tens of \emph{picoseconds}. The DW1000 radio chip is
+built for exactly this.
 
-Finally, because a rover has two tags mounted a fixed distance apart on a rigid plate,
-we can do better still. The two tags cannot move independently. Using that fact, we
-estimate the pose of the whole rover --- position \emph{and} which way it is facing ---
-rather than two separate points.
+\begin{plainwords}
+Think of each distance measurement as a piece of string from an anchor to the rover.
+One string tells you the rover is somewhere on a circle. Two strings narrow it to two
+points. Three or more pin it down. Because every string has a little error, the
+strings never agree perfectly, so we look for the point that keeps \emph{all} of them
+as close to happy as possible. Everything else in this document --- calibration,
+filtering, two-tag geometry --- exists to make the strings more truthful and the
+disagreement-settling smarter.
+\end{plainwords}
+
+The data flows through five stages, each covered by a part of this document:
+
+\begin{enumerate}
+\item \textbf{Ranging} (Part~III). The tag performs a timed message exchange with
+      each anchor in turn and reports the distances over USB or WiFi.
+\item \textbf{Correction} (Part~III). Each raw distance is corrected for two known
+      instrument errors: the antenna's internal delay, and a bias that depends on
+      signal strength.
+\item \textbf{Solving} (Part~IV). Corrected distances become a position by weighted
+      least squares.
+\item \textbf{Filtering} (Part~IV). Positions are smoothed over time by a Kalman
+      filter or a moving-horizon estimator, which know that rovers move smoothly.
+\item \textbf{Rigid-body fusion} (Part~V). With two tags bolted to one plate, we
+      estimate the rover's whole pose --- centre, heading, speed --- in one solve.
+\end{enumerate}
+
+Independently of all that, a Kinect camera on the ceiling watches a printed AprilTag
+marker on the rover. After careful calibration (Part~II) the camera is trusted as
+\textbf{ground truth}: it tells us where the rover \emph{really} is, so we can
+honestly score how well the radio system does.
+
+\subsection{Numbers at a glance}
 
 \begin{table}[h]
 \centering
-\caption{The pieces of the system.}
+\caption{Headline performance, all measured (not simulated unless stated).}
 \begin{tabular}{@{}lll@{}}
 \toprule
-\textbf{Piece} & \textbf{Count} & \textbf{Role} \\
+\textbf{Quantity} & \textbf{Value} & \textbf{Where shown}\\
 \midrule
-Anchors (DW1000 + ESP32) & 5 & Fixed around the room, at 24 cm height \\
-Tags & 2 & On the rover, 52.7 cm apart; one carries an IMU \\
-Ceiling camera (Kinect v2) & 1 & Watches a printed marker: independent truth \\
-Host computer (MATLAB) & 1 & Does all position calculation and logging \\
+Single-reading accuracy, parked        & 94\,mm RMSE (19 spots)      & \S\ref{sec:static}\\
+Filtered accuracy, parked              & 60--65\,mm                  & \S\ref{sec:mhe}\\
+Reference-point accuracy after calib.  & 4\,mm                       & \S\ref{sec:delay}\\
+Update rate                            & 5--7\,Hz (one tag)          & \S\ref{sec:protocol}\\
+Heading from two tags                  & 7.3$^\circ$ RMS vs truth    & \S\ref{sec:sixdof}\\
+Rigid-body accuracy (simulation)       & 14\,mm centre, 1.2$^\circ$  & \S\ref{sec:rigidvalid}\\
+Known residual drift, parked           & 5--7\,cm over minutes       & \S\ref{sec:breathing}\\
 \bottomrule
 \end{tabular}
 \end{table}
 
-%======================================================================
-\section{Ground truth: making the ceiling camera trustworthy}
+\section{Hardware and room setup}
+\label{sec:hardware}
 
-Before trusting any radio result, we needed something better to compare against.
-A camera on the ceiling looking down at a printed marker can do this, but only after
-it is calibrated. A camera that does not know its own height or lens properties will
-report confident, wrong positions.
+\begin{table}[h]
+\centering
+\caption{The physical pieces.}
+\small
+\begin{tabular}{@{}p{3.2cm}p{2.2cm}p{9.3cm}@{}}
+\toprule
+\textbf{Piece} & \textbf{Count} & \textbf{Details}\\
+\midrule
+Anchor & 5 & DW1000 UWB radio on an ESP32 host board, battery powered, mounted
+             \textbf{24\,cm} above the floor around a $\sim$6$\times$3\,m area.
+             Firmware: \gh{sketches/Anchor/Anchor.ino}{Anchor.ino}.\\
+Tag 240 (\code{0xF0}) & 1 & As above, plus a BNO085 IMU (orientation, gyro,
+             accelerometer). Mounted at the \textbf{rear} of the rover plate.
+             Firmware: \gh{sketches/TagWrover/TagWrover.ino}{TagWrover.ino}.\\
+Tag 241 (\code{0xF1}) & 1 & No IMU. Mounted at the \textbf{front}.
+             Firmware: \gh{sketches/Tag/Tag.ino}{Tag.ino}.\\
+Rover & 1 & Six-wheel, front-steering (Ackermann) --- it cannot slide sideways,
+             a fact we exploit in \S\ref{sec:unicycle}. Carries the two tags
+             \textbf{52.7\,cm} apart and an AprilTag marker.\\
+Kinect v2 & 1 & On the ceiling at 4.066\,m, looking down. Ground truth camera.\\
+Host PC & 1 & Runs MATLAB R2024b. All computation happens here; the radios only
+             measure and report.\\
+\bottomrule
+\end{tabular}
+\end{table}
 
-\subsection{How high is the camera, really?}
+Radio configuration (set in \gh{libraries/UwbRtls/src/UwbConfig.h}{UwbConfig.h}):
+channel~5, data rate 110\,kb/s, pulse repetition 64\,MHz, long preamble. This is the
+chip's most accurate mode --- slow but precise, the right trade for a 6\,Hz system.
 
-The camera's height matters because it sets the scale: the same marker at twice the
-height looks half as big. We measured it by \emph{parallax}. Place an object on the
-floor, note where it appears in the image; raise it by a known amount, note where it
-appears now. Because the camera is not exactly overhead, raising an object makes it
-appear to shift sideways, and how much it shifts depends on the height of the camera.
+The five anchor positions are stored in
+\gh{matlab/config/anchors.json}{anchors.json}. They were not measured with a tape:
+they were \emph{clicked} in the calibrated ceiling camera
+(\S\ref{sec:registration}), which is both faster and more accurate.
 
-This took three attempts, and the first two were wrong:
+\section{The repository, and your first live position}
+\label{sec:repo}
 
-\begin{itemize}
-\item A first estimate of 3.873 m came from a single noisy session and was unreliable.
-\item Two careful repeat sessions, hopping a box of known thickness around all four
-      quadrants, both gave about 4.21 m. Reproducible, but still biased, because lens
-      distortion inflates this kind of measurement by a few percent.
-\item The final method removed that bias by working in real-world coordinates rather
-      than raw pixels. It gave \textbf{4.066 m}, with a fit residual of 7.7 mm.
-\end{itemize}
+\begin{table}[h]
+\centering
+\caption{Repository layout. Names link to the code on GitHub.}
+\small
+\begin{tabular}{@{}ll@{}}
+\toprule
+\textbf{Folder} & \textbf{Contents}\\
+\midrule
+\ghdir{matlab/+dune}{matlab/+dune/} & The core library: parsing, solving, filters,
+transports. Everything callable as \code{dune.*}.\\
+\ghdir{matlab/scripts}{matlab/scripts/} & Runnable tools: live displays,
+calibration, analysis, replay.\\
+\ghdir{matlab/vision}{matlab/vision/} & Camera calibration and click-to-world
+tools.\\
+\ghdir{matlab/config}{matlab/config/} & Anchor layout and range corrections
+(JSON, human-readable).\\
+\ghdir{libraries/UwbRtls}{libraries/UwbRtls/} & The firmware library, vendored so
+the repo is self-contained.\\
+\ghdir{sketches}{sketches/} & The per-board Arduino sketches.\\
+\ghdir{docs}{docs/} & The living plan, findings documents, and this report.\\
+\bottomrule
+\end{tabular}
+\end{table}
 
-The same procedure produced the camera's focal length, 1067.6 pixels. As a sanity
-check, the ratio of height to focal length must match an independent measurement of
-how many metres one pixel covers on the floor. It agreed to within 0.2\%, which is
-what convinced us the numbers were finally right.
+\begin{tryit}
+With one tag plugged into USB (it enumerates as a COM port; tag 240 was COM12 here):
+\begin{lstlisting}
+addpath('matlab', 'matlab/scripts')
+live_tag("COM12")
+\end{lstlisting}
+A map opens showing the five anchors (green triangles), a grey ghost dot (the raw
+per-reading solve) and a red dot (the filtered position). The title bar shows
+position, update rate, how many anchors answered, and the solver residual. If an
+anchor stops answering its triangle turns red and the title names it
+(\code{MISS: A2}) --- the batteries are the usual suspect.
 
-\subsection{Lens distortion: deliberately not corrected}
+Over WiFi instead of USB (the tags always broadcast; you just have to listen):
+\begin{lstlisting}
+udp_probe(15)              % first: confirm packets actually arrive
+live_tag(transport="udp")
+\end{lstlisting}
+\end{tryit}
 
-We photographed straight strings and measured how much they bowed in the image. The
-bow was under 1.5 pixels across the whole field --- small enough to ignore. When we
-tried to fit a distortion model anyway, it produced a nonsensical lens centre because
-it was fitting our clicking noise rather than any real distortion. We recorded the
-lens as distortion-free and moved on. This is worth stating plainly: correcting a
-model that does not need correcting made things worse, not better.
+Every live session writes two logs to \code{matlab/logs/}: a JSONL file of parsed,
+solved records, and a raw byte-for-byte serial/UDP tee. Everything in this project
+is replayable offline from those logs --- a design decision that paid for itself
+many times over, because every bug could be reproduced without touching hardware.
 
-\subsection{Tying the camera to the room}
+% ============================================================================
+\part{Ground truth: the ceiling camera}
+% ============================================================================
 
-The camera also needs to know where the room is. We placed a marker at several known
-positions and solved for the transformation between camera coordinates and room
-coordinates. The fit had an error of \textbf{13.5 mm} (worst point 18.7 mm).
+\section{Calibrating the Kinect until it can be trusted}
+\label{sec:camera}
 
-One detail cost real time: the printed marker is 17.78 cm across, but the detector
-consistently behaved as though it were \textbf{16.9 cm}. This is a property of how the
-detector defines the marker's edges. Once anchored against tape measurements on the
-floor, the corrected size made the camera and the tape agree.
+Before believing any radio measurement, we needed an independent instrument that is
+\emph{more} accurate than the thing being tested. A downward-looking camera can be
+that instrument, but only after calibration. This section is the story of that
+calibration, including two wrong answers on the way --- kept here deliberately,
+because the \emph{method} of catching the wrong answers is the useful part.
 
-The payoff is that the camera became a measuring instrument: click any point in the
-image whose height is known, and get its room coordinates. We used this to place the
-anchors themselves --- clicking each anchor in the image rather than measuring five
-positions by hand.
+\subsection{The geometry of looking straight down}
 
-%======================================================================
-\section{Making the radios measure distance correctly}
+For a camera at height $h$ looking down, a flat object on the floor appears with a
+size proportional to $f/h$, where $f$ is the focal length in pixels. One pixel on
+the sensor corresponds to $h/f$ metres on the floor. With $h \approx 4$\,m and
+$f \approx 1068$\,px, one pixel is about 3.8\,mm of floor. Sub-centimetre truth is
+therefore possible --- \emph{if} $h$ and $f$ are right. Get $h$ wrong by 5\,\% and
+every distance the camera reports is wrong by 5\,\%.
 
-\subsection{How a distance measurement works}
+\subsection{Measuring the height by parallax}
+\label{sec:parallax}
 
-The tag sends a message; the anchor replies; the tag times the round trip. The catch
-is that the anchor takes some time to reply, and that reply delay is not perfectly
-known. The scheme used here (a double-sided exchange) cancels most of that unknown by
-using timestamps from both sides:
+You cannot hang a tape measure from the ceiling and call it done --- the optical
+centre of the camera is somewhere inside the housing. Instead we measured $h$ with
+the camera itself, using \textbf{parallax}: raise an object by a known amount and
+watch how far its image shifts.
 
+Consider a point on the floor at radial image distance $\rho_1$ from the point
+directly beneath the camera (the \emph{nadir}). Raise it by $\Delta z$ (we used a
+box of measured thickness 0.355\,m) and it appears further out, at $\rho_2$,
+because it is now closer to the camera. Similar triangles give
 \begin{equation}
+\frac{\rho_2}{\rho_1} \;=\; \frac{h}{\,h-\Delta z\,}
+\qquad\Longrightarrow\qquad
+h \;=\; \Delta z \,\frac{\rho_2}{\,\rho_2-\rho_1\,}.
+\end{equation}
+
+\begin{plainwords}
+Hold your thumb at arm's length and raise it towards your eye: it drifts away from
+the centre of your view. How \emph{fast} it drifts depends on how far away your eye
+is. The camera's height falls out of the same effect, measured in pixels.
+\end{plainwords}
+
+\begin{pitfall}
+Our first height estimate, 3.873\,m, came from a single sloppy session and was
+simply wrong. Two careful repeats (box hops in all four quadrants of the image,
+plumb-bob to transfer the floor point) both said $\approx$4.21\,m --- reproducible,
+so we almost believed it. It was \emph{also} wrong, by about 3\,\%: uncorrected
+image distortion biases raw-pixel parallax high. The final method
+(\S\ref{sec:stagec}) works in floor coordinates instead of raw pixels and gave
+\textbf{4.066\,m} with a 7.7\,mm fit residual. The lesson: reproducibility is
+necessary but not sufficient --- a systematic bias reproduces beautifully.
+\end{pitfall}
+
+\subsection{Focal length, and the consistency test that settled everything}
+\label{sec:stagec}
+
+The refined procedure (implemented in
+\gh{matlab/vision/calibrateOverheadCamera.m}{calibrateOverheadCamera.m} and
+friends) solves for height and focal length together, using box hops expressed in
+metric floor coordinates through a fitted floor homography. It returned
+$h = 4.066$\,m and $f = 1067.6$\,px.
+
+The number was accepted only after an \emph{independent} cross-check. The ratio
+$h/f$ is metres-per-pixel on the floor, and we can measure that directly by laying
+tape measures in the image (\gh{matlab/vision/addScaleBars.m}{addScaleBars.m}).
+The two agreed to 0.2\,\%:
+\[
+h/f = 4.066/1067.6 = 3.808\,\text{mm/px}
+\qquad\text{vs}\qquad
+3.815\,\text{mm/px from tape}.
+\]
+When two genuinely independent methods agree that closely, the calibration is done.
+
+\subsection{Lens distortion: measured, then deliberately ignored}
+
+Wide lenses bend straight lines. We photographed stretched strings across the field
+and measured the bow: \textbf{under 1.5 pixels everywhere} --- about 6\,mm of floor,
+at the edge of the field, worst case. We then tried fitting a distortion model
+anyway, and it confidently produced a distortion centre far from the image centre:
+it was fitting our mouse-click noise, not the lens. The model was discarded and the
+lens declared straight. Knowing when \emph{not} to model something is calibration
+skill too.
+
+\subsection{Tying the camera to the room, and clicking the anchors in}
+\label{sec:registration}
+
+The camera reports positions in its own frame. To connect it to the room we placed
+the AprilTag at several positions, clicked its corners, and solved the rigid
+transform camera$\to$world
+(\gh{matlab/vision/registerWorldFrameClicks.m}{registerWorldFrameClicks.m}).
+Registration residual: \textbf{13.5\,mm RMS}, worst point 18.7\,mm.
+
+\begin{pitfall}
+The printed AprilTag measures 17.78\,cm, but the detector behaves as if it were
+\textbf{16.9\,cm} --- a real property of how the detector defines a tag's border,
+not a printing error. Until this was anchored against tape measurements, every
+camera distance carried a hidden 5\,\% scale error. If you use AprilTags for
+metrology, calibrate the \emph{effective} size, not the printed one.
+\end{pitfall}
+
+With registration done, the camera became a point-measuring machine: click any
+pixel whose height above the floor is known, get room coordinates
+(\gh{matlab/vision/clickTagTruth.m}{clickTagTruth.m}). The five anchors were
+positioned exactly this way --- clicked, not taped
+(\gh{matlab/vision/clickAnchorsWorld.m}{clickAnchorsWorld.m}) --- which is why the
+anchor file's layout is named \code{clicked\_kinect}.
+
+\begin{tryit}
+To measure a parked tag's true position (used throughout calibration):
+\begin{lstlisting}
+truth = clickTagTruth(0.24, struct('uwbTagIds', 240));
+% 0.24 = the tag antenna's height above the floor in metres.
+% Click the antenna in the snapshot; world (x,y) comes back.
+\end{lstlisting}
+The height argument matters: a click is a ray from the camera, and the height picks
+the point along that ray. An error of $\Delta z$ shifts the answer by roughly
+$\rho\,\Delta z/h$ --- at 2\,m from the nadir, 1\,cm of height error is
+$\sim$5\,mm of position error.
+\end{tryit}
+
+% ============================================================================
+\part{Measuring distance with radio}
+% ============================================================================
+
+\section{Two-way ranging}
+\label{sec:twr}
+
+\subsection{The idea, and why it takes four timestamps}
+
+A tag cannot simply timestamp a message and have the anchor timestamp its arrival:
+the two clocks are not synchronised, and never will be to picoseconds. Instead the
+tag times a \emph{round trip}, which uses only its own clock. But then the anchor's
+processing delay sits inside the measurement, and worse, the two clocks tick at
+very slightly different \emph{rates} (crystal oscillators differ by parts per
+million --- at nanosecond scales that matters).
+
+The fix is \textbf{double-sided two-way ranging}: both sides measure both a round
+trip and a reply delay, and the four numbers are combined as
+\begin{equation}
+\label{eq:dstwr}
 t_{\text{flight}} \;=\;
-\frac{T^{\text{tag}}_{\text{round}} \cdot T^{\text{anc}}_{\text{round}}
-      - T^{\text{tag}}_{\text{reply}} \cdot T^{\text{anc}}_{\text{reply}}}
+\frac{T^{\text{tag}}_{\text{round}}\; T^{\text{anc}}_{\text{round}}
+      \;-\; T^{\text{tag}}_{\text{reply}}\; T^{\text{anc}}_{\text{reply}}}
      {T^{\text{tag}}_{\text{round}} + T^{\text{anc}}_{\text{round}}
       + T^{\text{tag}}_{\text{reply}} + T^{\text{anc}}_{\text{reply}}},
-\qquad
-d = c \cdot t_{\text{flight}}
+\qquad d = c\, t_{\text{flight}} .
 \end{equation}
 
-In words: each side measures both how long it waited and how long it took to reply,
-and the combination cancels the error that arises because the two devices' clocks run
-at slightly different speeds. We audited this formula specifically to rule out clock
-drift as a source of our residual error, and it is clean.
+\begin{plainwords}
+Each side asks: ``how long did I wait in total, and how long did I spend replying?''
+Multiplying and dividing the four durations in this particular pattern makes the
+unknown clock-rate difference cancel to first order. We specifically audited that
+our firmware uses this product form (in
+\gh{libraries/UwbRtls/src/TwrEngine.cpp}{TwrEngine.cpp}) --- because if it had used
+the simpler averaging form, clock drift would have been a suspect for the drift
+problem of \S\ref{sec:breathing}. It is not.
+\end{plainwords}
 
-\subsection{Antenna delay: the single biggest error}
-
-The radio signal takes time to travel through the antenna and circuitry before it
-leaves the device. To the timer this looks exactly like extra distance. Each board
-needs a calibration constant for this delay.
-
-We hit a trap here worth recording. The calibration constants are stored in the
-anchors' flash memory, and \textbf{that memory survives reprogramming}. Old, wrong
-values from an earlier era of the project were still present. One anchor reported
-distances 4 m too long, another 1 m too long, consistently and quietly. The symptom
-was that the computed position sat outside the room. A factory reset of the stored
-values fixed it instantly.
-
-We then calibrated properly: park the tag at a spot the camera has measured, compare
-each anchor's reported distance to the true distance, and adjust that anchor's delay
-constant. One tick of the delay setting equals 4.69 mm, so the correction is direct.
-Two rounds brought every anchor within 16 mm, and the parked position landed
-\textbf{4 mm} from the camera's answer.
-
-\subsection{An unexplained anomaly}
-
-While calibrating we found something we never fully explained. The same distance
-measurement code gives different answers depending on how rapidly it is called. Rapid
-back-to-back measurements and the normal round-robin pattern disagree by a fixed
-amount per anchor, between 60 mm and 500 mm. Both use the identical routine.
-
-We could not identify the cause. Our workaround was to calibrate using the same
-pattern the system actually uses in normal operation, so the anomaly cancels. It is
-recorded here as an open question, not a solved one.
-
-\subsection{Strong signals read long}
-
-After delay calibration, a clear pattern remained: when a signal arrives strong, the
-measured distance is slightly too long; when weak, slightly too short. This is a known
-characteristic of this radio chip. Across a 19-position measurement campaign, the
-correlation between signal strength and distance error was $+0.78$.
-
-We fitted a straight-line correction per anchor,
+The chip's time unit sets the ruler: one DW1000 tick is
+$1/(128 \times 499.2\,\text{MHz}) \approx 15.65$\,ps, which at the speed of light is
 \begin{equation}
-d_{\text{corrected}} = d_{\text{measured}} - (a_k \cdot p_{\text{fp}} + b_k),
+1\ \text{tick} \;\approx\; \textbf{4.69 mm}.
 \end{equation}
-where $p_{\text{fp}}$ is the strength of the first arriving path of the signal and
-$a_k, b_k$ are that anchor's fitted constants. Slopes came out between 7.7 and
-9.5 mm per decibel. This correction cut the position error roughly in half
-(199 mm to 94 mm, see Section~\ref{sec:static}).
+This number appears throughout the calibration tools: one antenna-delay tick moves
+every measured distance by 4.69\,mm.
 
-We also tried fitting this relationship with a neural network and with a
-physics-constrained network. Both did \emph{worse} than the straight line. That
-result is discussed in Section~\ref{sec:failures}.
+\subsection{How a measurement round actually runs}
+\label{sec:protocol}
 
-%======================================================================
-\section{From distances to a position}
+One tag ranges to the five anchors \emph{in turn} --- one exchange at a time, so
+radios never talk over each other
+(\gh{libraries/UwbRtls/src/UwbScheduler.cpp}{UwbScheduler.cpp}). A full sweep of
+five anchors takes roughly 125\,ms, giving the 5--7\,Hz update rate. An anchor that
+fails twice in a row is skipped for a few sweeps with exponential back-off, so a
+dead anchor cannot stall the ring. With two tags, a token-passing ring
+(\gh{libraries/UwbRtls/src/TagRing.cpp}{TagRing.cpp}) alternates sweeps between
+them --- which is why each tag reports at $\sim$3\,Hz when both run.
 
-Given corrected distances $d_k$ to anchors at known positions $\mathbf{a}_k$, we look
-for the position $\mathbf{p}$ that best explains them. We minimise the total squared
-disagreement:
+After each sweep the tag prints one text line (and, if WiFi is up, broadcasts the
+same line as a UDP packet). The format is deliberately boring --- versioned ASCII,
+one line per sweep:
+\begin{center}\small
+\code{RTLS,v4,<ms>,<tag>,<n>,\{id,mm,rx,fp,q,cfo,tex\}$\times$n,DIAG,temp,vbat[,IMU,...]}
+\end{center}
+carrying per anchor: distance (mm), received power and first-path power (dBm),
+quality, carrier-frequency offset and slot timing (diagnostics added during the
+investigation of \S\ref{sec:breathing}); then radio temperature and battery; then
+the IMU sample if the tag has one. Parsed by
+\gh{matlab/+dune/parseRtlsLine.m}{parseRtlsLine.m}, which accepts both v3 and v4.
 
+\begin{pitfall}
+A failed diagnostic read inside the chip yields the sentinel value
+\code{-2147483648} in the power fields. Early on this poisoned averages silently.
+Every consumer now rejects sentinel-bearing measurements explicitly
+(see \code{SENTINEL} in \gh{matlab/+dune/solveSweep.m}{solveSweep.m}).
+\end{pitfall}
+
+\section{Calibrating the radios}
+\label{sec:calibration}
+
+Raw DW1000 distances are wrong by metres. Two corrections bring them to centimetres.
+
+\subsection{Antenna delay --- and the trap in stored memory}
+\label{sec:delay}
+
+The signal spends time inside each board --- silicon, PCB traces, the antenna
+itself --- before it physically leaves. The timer cannot tell this from flight
+time, so every board carries a calibration constant (``antenna delay'') subtracted
+in hardware. Each tick of it is the 4.69\,mm above.
+
+\begin{pitfall}
+The delay constants live in the ESP32's non-volatile storage (NVS), and
+\textbf{NVS survives re-flashing}. Boards carried garbage values from months
+earlier: one anchor measured $+4$\,m, another $+1$\,m, consistently, with tight
+scatter --- it looked exactly like a software bug. The tell was that the errors
+were \emph{constant per anchor} and survived every host-side change. A factory
+reset of the stored values fixed it instantly. Any future bring-up should wipe NVS
+first. (The boot banner now always prints which delay source is active, so this is
+visible at every connect.)
+\end{pitfall}
+
+Calibration then proceeded against camera truth: park the tag at a clicked
+reference point, compare each anchor's median measured distance with the true
+distance, convert the error to ticks ($\div 4.69$\,mm), push the adjustment to the
+anchor over the air (\code{SETANTDELAY}), repeat. Implemented in
+\gh{matlab/scripts/tune\_delays\_sweep.m}{tune\_delays\_sweep.m}; the tag's own
+delay is tuned the same way by
+\gh{matlab/scripts/tune\_tag\_delay.m}{tune\_tag\_delay.m} (tag 241 converged in a
+single step: a $-507$\,mm common offset became $-2$\,mm).
+
+\begin{result}
+After two rounds, all five anchors measured within $\pm16$\,mm at the reference
+point, and the solved position there landed \textbf{4\,mm} from camera truth.
+\end{result}
+
+\subsection{An anomaly we could not explain}
+\label{sec:anomaly}
+
+During calibration we found that the \emph{same} ranging routine gives a different
+answer depending on how it is called. Rapid back-to-back exchanges (the burst mode
+used by a hardware self-calibration command) and the normal round-robin sweep
+disagree by a constant per-anchor offset between $+60$ and $+500$\,mm ---
+reproducible across runs, linear at exactly 4.72\,mm per delay tick within each
+mode. Same code, same boards, different calling pattern.
+
+We never found the mechanism. Later analysis (\S\ref{sec:phaseA}) showed a small
+real timing-state effect exists ($\pm$5--7\,mm), far too small to explain this.
+The pragmatic fix: \textbf{calibrate on the exact path production uses}, so
+whatever the effect is, it cancels. Recorded honestly as open.
+
+\subsection{Strong signals measure long: the power bias}
+\label{sec:powerbias}
+
+With delays calibrated, a clean pattern remained in the data: distance error
+correlated with received signal strength at $\rho = +0.78$. Strong signal, reads
+long; weak signal, reads short. This is a documented DW1000 characteristic (the
+leading-edge detector fires slightly differently with amplitude), and the vendor's
+published coarse correction is already applied inside the driver --- what we see is
+the residual on top.
+
+We fitted, per anchor $k$, a straight line in the \emph{first-path} power
+$p_{\mathrm{fp}}$ (the strength of the earliest signal component --- more stable
+than total power):
+\begin{equation}
+d_{\text{corrected}} \;=\; d_{\text{measured}} \;-\;
+\big(a_k\, p_{\mathrm{fp}} + b_k\big),
+\qquad a_k \in [7.7,\,9.5]\ \text{mm/dB}.
+\end{equation}
+The fit lives in \gh{matlab/config/range\_correction.json}{range\_correction.json},
+is loaded by \gh{matlab/+dune/loadRangeCorrection.m}{loadRangeCorrection.m}, and is
+applied inside \code{solveSweep} with the power clamped to the fitted range so the
+line is never extrapolated. Validated leave-one-position-out: fitting on 18 of the
+19 campaign positions and testing on the held-out one.
+
+\begin{result}
+Floor-wide single-reading accuracy: \textbf{199\,mm $\to$ 94\,mm RMSE}. This one
+correction did more than any other single change in the project.
+\end{result}
+
+We also tried a neural network and a physics-informed network for this correction.
+Both lost to the straight line --- see \S\ref{sec:fail-ml}.
+
+\section{Getting the data to MATLAB}
+\label{sec:transport}
+
+Two interchangeable transports feed the host, with the same interface
+(\code{start} / \code{drain} / \code{drainEvents} / send):
+
+\begin{itemize}
+\item \gh{matlab/+dune/TagSerial.m}{TagSerial.m} --- USB serial, 115200 baud.
+      Opening the port resets the tag (DTR line), which is actually useful: you
+      always see the boot banner, including which antenna delay is active.
+\item \gh{matlab/+dune/TagUdp.m}{TagUdp.m} --- WiFi. The firmware broadcasts every
+      sweep to port 4100 already; this class just listens. One socket receives
+      \emph{both} tags and the consumer separates them by the tag id in each line.
+      It also learns each tag's IP from its traffic, so commands can be sent back.
+\end{itemize}
+
+\begin{pitfall}
+Two traps here. First, MATLAB's own \code{udpport} needs a toolbox we do not have
+--- so \code{TagUdp} uses the Java \code{DatagramSocket} that ships inside MATLAB.
+Second, an \emph{empty} Java socket poll costs $\sim$15\,ms (it works by timeout
+exception). Harmless in a display loop; catastrophic inside a 20\,Hz control loop,
+as \S\ref{sec:fail-loop} recounts. Poll once per loop, not twice.
+
+Also: the first bind pops a Windows Firewall prompt. Decline it and packets vanish
+silently forever.
+\end{pitfall}
+
+\begin{tryit}
+Is the network delivering at all? This prints every arriving line and a per-tag
+summary, and is the first thing to run when WiFi ``does not work'':
+\begin{lstlisting}
+udp_probe(15)        % listen 15 s on port 4100
+\end{lstlisting}
+For years the project believed the campus WiFi blocked UDP. \code{udp\_probe}
+disproved that in fifteen seconds. Measure; do not inherit beliefs.
+\end{tryit}
+
+% ============================================================================
+\part{From distances to positions}
+% ============================================================================
+
+\section{The least-squares position solver}
+\label{sec:solver}
+
+\subsection{The cost function}
+
+Given corrected distances $d_k$ to anchors at known positions $\mathbf{a}_k$, the
+solver (\gh{matlab/+dune/multilaterate.m}{multilaterate.m}) finds the tag position
+$\mathbf{p} = (x,y)$ minimising
 \begin{equation}
 \label{eq:ls}
-\hat{\mathbf{p}} \;=\; \arg\min_{\mathbf{p}} \;
-\sum_k w_k \Big( \underbrace{\lVert \mathbf{p} - \mathbf{a}_k \rVert}_{\text{distance the guess implies}} - \underbrace{d_k}_{\text{distance measured}} \Big)^{2}
+J(\mathbf{p}) \;=\; \sum_k w_k\,
+\Big(\; \underbrace{\lVert \mathbf{p}-\mathbf{a}_k \rVert}_{\text{distance if the tag were at } \mathbf{p}}
+\;-\; \underbrace{d_k}_{\text{distance measured}} \;\Big)^2 .
 \end{equation}
+The tag's height is fixed and known (24\,cm --- it rides a plate, it does not fly),
+so only $x$ and $y$ are solved. That makes the problem small, fast, and hard to
+break.
 
-Each term asks: if the rover were at $\mathbf{p}$, how far off would this anchor's
-measurement be? We add these up and pick the $\mathbf{p}$ that makes the total
-smallest. The weights $w_k$ let us trust some anchors more than others.
+\begin{plainwords}
+For a candidate position, ask each anchor: ``if the tag were here, how wrong would
+your measurement be?'' Square those wrongnesses (so sign does not matter and big
+errors hurt disproportionately), weight them by how much you trust each anchor, add
+them up. The position with the smallest total wins.
+\end{plainwords}
 
-Because the distance function is curved rather than straight, there is no formula for
-the answer; we start from a guess and improve it repeatedly (Levenberg--Marquardt).
-The height of the tag is fixed and known, so only two numbers are being solved for,
-which makes it fast and reliable.
+Because distance is a curved function of position there is no closed-form answer.
+Levenberg--Marquardt iterates from a starting guess: each step solves
+\begin{equation}
+\boldsymbol{\delta} = -\big(J^\top W J + \lambda\,\mathrm{diag}(J^\top W J)\big)^{-1}
+J^\top W\, \mathbf{r},
+\end{equation}
+where $\mathbf{r}$ is the vector of per-anchor errors and $J$ its sensitivity to
+moving $\mathbf{p}$. The damping $\lambda$ makes it cautious when a step fails and
+bold when steps succeed. Warm-starting from the previous position means it
+typically converges in two or three iterations.
 
-Two practical additions matter:
+\subsection{Three defences that matter}
 
-\begin{itemize}
-\item \textbf{Rejecting outliers.} After a first solve, any measurement that disagrees
-      wildly with the rest is dropped and the solve is repeated. The threshold adapts
-      to how noisy that particular reading set is.
-\item \textbf{Refusing bad geometry.} If the only anchors answering happen to lie
-      almost in a straight line, the geometry is ambiguous --- there are two mirror-image
-      answers and no way to choose. The solver detects this and declines to answer
-      rather than produce a confident guess. This turned out to matter (see
-      Section~\ref{sec:failures}).
-\end{itemize}
+\textbf{Outlier gate.} After a first solve, the spread of the errors is estimated
+robustly with the median absolute deviation, $\hat\sigma = 1.4826\cdot
+\mathrm{median}|r_k - \tilde r|$ --- a spread estimate that one wild value cannot
+inflate. Any measurement further than $3\hat\sigma$ out is dropped and the solve
+repeated. A floor of 2\,cm stops the gate from becoming paranoid when all
+residuals happen to be tiny.
 
-%======================================================================
-\section{Static accuracy: how good is it standing still?}
+\textbf{Collinearity guard.} If the anchors that answered lie nearly on a straight
+line, the two mirror-image positions across that line fit \emph{equally well} ---
+the data genuinely cannot decide. The solver checks the spread of the answering
+anchors perpendicular to their principal line (the second singular value of their
+centred coordinates) and \textbf{refuses to answer} below 0.3\,m. This is not
+cosmetic: when two anchors died mid-run and left three nearly-collinear ones, this
+guard was the only honest response (\S\ref{sec:fail-dualtag}).
+
+\textbf{Signal-quality weights.} A radio path with no line of sight shows a
+signature: total received power well above first-path power (energy arriving late,
+via reflections). The gap $p_{\mathrm{rx}} - p_{\mathrm{fp}}$ in dB drives a soft
+weight (\gh{matlab/+dune/gapWeights.m}{gapWeights.m}) so obstructed anchors count
+less without being discarded.
+
+The full per-sweep pipeline --- sentinel rejection, power correction, weights,
+solve, diagnostics --- is assembled in
+\gh{matlab/+dune/solveSweep.m}{solveSweep.m}, which is the \emph{single} solve path
+used by every live tool and every replay. One code path means offline results and
+live results can never quietly diverge.
+
+\section{The static baseline, and an important ceiling}
 \label{sec:static}
 
-We parked the tag at 19 measured positions around the floor and recorded about 7,600
-readings. This is the honest baseline.
+To measure honestly, we parked the tag at \textbf{19 camera-clicked positions}
+across the floor ($\sim$20\,s each, $\sim$7\,600 readings total) using
+\gh{matlab/scripts/static\_accuracy.m}{static\_accuracy.m}.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.85\textwidth]{figures/static_campaign_map.png}
+\caption{The static campaign: truth positions (green $\times$), median solved
+positions (red dots), and per-spot error. The variation across the floor is the
+spatial error field that the power correction then largely removes.}
+\end{figure}
 
 \begin{table}[h]
 \centering
-\caption{Position error over 19 parked positions, single readings, no time filtering.}
+\caption{Single-reading 2-D error over all 19 positions (no time filtering).}
 \begin{tabular}{@{}lccc@{}}
 \toprule
-& \textbf{RMSE} & \textbf{Median} & \textbf{95th percentile} \\
+& \textbf{RMSE} & \textbf{Median} & \textbf{95th pct.}\\
 \midrule
-Raw (delay calibration only) & 199 mm & 132 mm & 393 mm \\
-With signal-strength correction & \textbf{94 mm} & \textbf{69 mm} & 160 mm \\
-Best possible with a perfect fixed correction & 72 mm & 31 mm & --- \\
+Delay calibration only                  & 199\,mm & 132\,mm & 393\,mm\\
++ power-bias correction                 & \textbf{94\,mm} & \textbf{69\,mm} & 160\,mm\\
+\emph{Oracle}: a perfect per-spot constant & 72\,mm & 31\,mm & ---\\
 \bottomrule
 \end{tabular}
 \end{table}
 
-The last row deserves attention. We asked: suppose we cheated, and gave every position
-a perfect constant correction derived from its own data. How good could it possibly
-get? The answer was 72 mm --- not zero. That tells us the remaining error is not a
-fixed map of the room that we simply have not measured well enough. It \emph{changes
-over time at a fixed position}. No static correction can remove it. This single
-result redirected the whole investigation described in Section~\ref{sec:wobble}.
+The \emph{oracle} row is the most informative experiment in the project. We asked:
+if we cheated and subtracted each position's own average error --- the best any
+\emph{fixed} correction could ever do --- what remains? Answer: 72\,mm, not zero.
 
-%======================================================================
-\section{Using time: the Kalman filter}
+\begin{plainwords}
+That means the leftover error is not a map of the room waiting to be measured.
+It \emph{changes over time while the tag sits still}. No lookup table, no smarter
+fixed calibration, no denser survey can remove it. Something in the radio
+environment is slowly moving. Chasing that something is \S\ref{sec:breathing}.
+\end{plainwords}
 
-A single reading is noisy, but the rover moves smoothly. A Kalman filter combines a
-prediction of where the rover should be with the new measurement, weighted by how much
-each is trusted.
+\section{The Kalman filter}
+\label{sec:ekf}
 
-The filter tracks position and velocity, $\mathbf{x} = [p_x, p_y, v_x, v_y]$, and
-between readings assumes velocity roughly persists:
+A single reading is noisy; the rover moves smoothly. A Kalman filter
+(\gh{matlab/+dune/FusionEkf.m}{FusionEkf.m}) exploits that by carrying a
+\emph{belief} --- position, velocity, and how uncertain both are --- forward
+through time, correcting it with each new fix.
+
+\textbf{Predict.} Between readings the state
+$\mathbf{x} = [p_x, p_y, v_x, v_y]^\top$ advances under constant velocity,
 \begin{equation}
-\mathbf{p}_{k+1} = \mathbf{p}_k + \mathbf{v}_k \Delta t, \qquad
-\mathbf{v}_{k+1} = \mathbf{v}_k + (\text{unknown acceleration}).
+\mathbf{p} \leftarrow \mathbf{p} + \mathbf{v}\,\Delta t,
+\qquad
+\mathbf{v} \leftarrow \mathbf{v} + \text{(unknown acceleration)},
 \end{equation}
-How much unknown acceleration we allow is the main tuning knob: allow a lot and the
-filter chases noise; allow little and it lags behind real motion.
+and the uncertainty grows by how much acceleration we are willing to imagine
+($\sigma_a = 0.8$\,m/s$^2$ while moving). This knob is the responsiveness/smoothness
+trade: too big and the filter chases noise, too small and it lags corners.
 
-Several additions were needed, each fixing an observed problem:
+\textbf{Update.} A new fix $\mathbf{z}$ is compared with the prediction; the
+surprise $\mathbf{y} = \mathbf{z} - \hat{\mathbf{p}}$ is weighed against the
+combined uncertainty $S$, and the state moves part-way toward the measurement:
+$\mathbf{x} \leftarrow \mathbf{x} + K\mathbf{y}$ with gain
+$K = P H^\top S^{-1}$. The scalar $\mathbf{y}^\top S^{-1}\mathbf{y}$ (``how many
+sigmas of surprise'') is $\chi^2$-gated at 95\,\%.
 
-\begin{description}
-\item[Outlier handling that bends rather than breaks.] Originally a reading that looked
-      too surprising was rejected outright. This is brittle. Instead, moderately
-      surprising readings are now \emph{down-weighted} in proportion to how surprising
-      they are, and only wildly impossible ones are rejected. This alone improved one
-      operating mode from 164 mm to 105 mm.
+Five additions, each earned by an observed failure:
 
-\item[Knowing when it is stopped.] When the IMU says the rover is still, we feed the
-      filter an extra fact: the velocity is zero. Useful, but not sufficient on its own
-      --- see the next point.
+\begin{enumerate}
+\item \textbf{Robust updates, not hard rejection.} A fix slightly beyond the gate
+      is not discarded; its assumed noise is inflated so its surprise sits exactly
+      at the gate --- it still pulls, just gently (the Huber idea, borrowed from
+      the Bitcraze flight stack). Only fixes beyond $10\times$ the gate are
+      rejected outright. One failing mode improved 164\,mm~$\to$~105\,mm from this
+      change alone.
+\item \textbf{ZUPT.} When the IMU's recent window is quiet
+      ($\max|\mathbf{a}| < 0.12$\,m/s$^2$, $\max|\boldsymbol\omega| < 0.05$\,rad/s
+      over 8 samples), feed a pseudo-measurement $\mathbf{v} = 0$. The window
+      matters: instantaneous thresholds fire mid-stride.
+\item \textbf{stillMode.} ZUPT alone did not pin a parked tag --- the process
+      noise kept re-opening the gain ($\sim$30\,mm of fresh position uncertainty
+      per step). When still, $\sigma_a$ drops to 0.05\,m/s$^2$ and the dot
+      genuinely settles.
+\item \textbf{Per-anchor bias states.} Each anchor's residual bias is learned as an
+      extra state, $d_k = \lVert\mathbf{p}-\mathbf{a}_k\rVert + b_k$, a slow random
+      walk that is \emph{remembered while the anchor is absent}. Why: when the
+      answering subset changes, the average bias changes, and the position used to
+      jump 13--30\,mm. With bias memory: \textbf{6--9\,mm}.
+\item \textbf{RangeHold} (\gh{matlab/+dune/RangeHold.m}{RangeHold.m}). The
+      complementary trick at the measurement level: an anchor that misses a sweep
+      contributes its recent median for a short grace period, so the solve
+      geometry never collapses. Subset jumps at the raw level: 13--28\,mm $\to$
+      \textbf{6--10\,mm}.
+\end{enumerate}
 
-\item[Freezing the noise budget when still.] Even with zero velocity enforced, the
-      filter kept re-injecting position uncertainty every step, which kept it
-      responsive to noise and made a parked tag wander. Reducing the assumed
-      acceleration noise while stationary is what actually made the parked dot settle.
+\begin{tryit}
+Everything above can be re-run offline against any logged session:
+\begin{lstlisting}
+ekf_replay("matlab/logs/serial_raw_20260721_202505.log")
+% with a static campaign for scoring against truth:
+ekf_replay(srcLog, spotsJson="matlab/results/static_accuracy_.../spots.json")
+\end{lstlisting}
+\end{tryit}
 
-\item[Remembering each anchor's personality.] Each anchor has a small persistent bias.
-      When the set of answering anchors changes --- one drops out for a moment --- the
-      average of those biases changes, and the position jumps. We added one slowly
-      varying bias value per anchor, so the model becomes
-      $d_k = \lVert \mathbf{p} - \mathbf{a}_k \rVert + b_k$. These are remembered
-      through dropouts. Position jumps at anchor changes fell from 13--30 mm to 6--9 mm.
+\section{The slow ``breathing'', and how we hunted it}
+\label{sec:breathing}
 
-\item[Holding a missing anchor's last value.] Complementary idea: if an anchor misses a
-      reading, reuse its recent distance briefly rather than dropping it, so the
-      geometry stays complete. Jumps fell from 13--28 mm to 6--10 mm.
-\end{description}
+With all of the above, a parked tag still wandered \textbf{5--7\,cm over seconds to
+minutes} --- slow, smooth, and indistinguishable from genuine creeping motion. This
+section matters beyond this project: it is a worked example of isolating an error
+you cannot remove.
 
-%======================================================================
-\section{The stubborn residual: a slow ``breathing''}
-\label{sec:wobble}
+\subsection{Phase A: interrogating existing logs}
+\label{sec:phaseA}
 
-With everything above working, a parked tag still drifted slowly by 5--7 cm over
-seconds to minutes. Fast jitter was gone; this was different. It looks exactly like
-slow genuine motion, which means no filter can remove it --- a filter that removed it
-would also refuse to follow the rover when it actually crept forward.
+Three hypotheses were tested purely on recorded data
+(\gh{matlab/scripts/phase\_a\_forensics.m}{phase\_a\_forensics.m}, findings in
+\gh{docs/phase\_a\_findings.md}{phase\_a\_findings.md}).
 
-We investigated systematically. The value of this section is as much in what we
-\emph{eliminated} as in what we found.
+\textbf{A1 --- is it measurement timing?} The anomaly of \S\ref{sec:anomaly}
+suggested distance depends on exchange cadence, and production cadence wanders
+(retries, skips). Across 44\,000 measurements, the correlation between each
+anchor's realised timing gap and its distance error was $|\rho| \le 0.06$.
+\emph{Rejected} --- though a genuine micro-effect exists: a measurement following
+extra receiver idle time shifts by $\pm$5--7\,mm, and the first reading after a
+long gap reads $+39$\,mm. Two orders of magnitude too small.
 
-\subsection{Is it caused by irregular measurement timing?}
+\textbf{A2 --- is it the tag or the links?} The decisive split. If the tag's
+clock/temperature drifted, \emph{all five} distances would breathe together
+(common mode). If the radio paths are each doing their own thing, they breathe
+independently. Measured cross-anchor correlation of the slow residuals over 23
+parked dwells: \textbf{+0.05} --- independent. One number eliminated the tag's
+clock, temperature and battery, and pointed at the individual links.
 
-Hypothesis: the measurement rate wobbles (retries, skipped anchors), and the radio
-gives slightly different answers depending on timing --- which the anomaly in
-Section~3.3 suggests. We tested this on 44,000 stored measurements by correlating each
-anchor's realised timing gap against its distance error.
+\textbf{A3 --- can the filter absorb it?} We tried inverting the noise budget while
+parked: trust position completely, let the per-anchor bias states soak up the
+drift. It made things dramatically worse (91\,mm $\to$ 319\,mm) --- see
+\S\ref{sec:fail-inversion} for the instructive reason.
 
-\textbf{Rejected.} Correlation never exceeded 0.06. A real but tiny effect exists
-($\pm$5--7 mm depending on whether the previous slot succeeded), but it is far too
-small. One useful by-product: the first reading after an anchor returns from a long
-absence reads about 39 mm long, which justified keeping the ``hold last value'' logic.
+\subsection{Phase B: looking at the radio waveform itself}
 
-\subsection{Is it the tag, or the links?}
+The DW1000 can dump its channel impulse response (CIR) --- the received signal
+amplitude tap by tap, one tap $\approx$ 30\,cm of path. We added a capture command
+to the firmware (\code{CIR,<anchor>} in
+\gh{libraries/UwbRtls/src/TwrEngine.cpp}{TwrEngine.cpp}) and a waterfall tool
+(\gh{matlab/scripts/cir\_capture.m}{cir\_capture.m}).
 
-If the cause were in the tag (its clock, its temperature), every anchor's distance
-would drift \emph{together}. If it is in the individual radio paths, they drift
-independently. This is a clean, decisive test.
-
-We measured how each anchor's error correlated with the others across 23 parked
-periods. Average correlation: \textbf{+0.05} --- essentially independent.
-
-\textbf{Conclusion: the cause is per-link, not tag-side.} That eliminated the tag's
-clock, temperature, and battery in one step, and pointed at the radio path itself.
-
-\subsection{Looking at the radio signal directly}
-
-We added the ability to capture the raw shape of the arriving radio signal. The result
-was unambiguous. The first arriving path --- the direct line, the one whose timing we
-use --- is roughly \textbf{20 dB weaker than the strongest reflection}, and only
-8--10 dB above the noise floor.
-
-This is the expected situation when antennas sit 24 cm above the floor: the signal
-grazes along the ground, the floor reflection arrives almost simultaneously with the
-direct path, and the two blend together. The exact blend shifts as the environment
-changes, moving the apparent arrival time by centimetres. A quiet, empty room drifted
-just as much as one with someone walking through it, which shows this is a property of
-the geometry, not of moving people.
-
-\subsection{What we did about it}
-
-Understanding the cause did not immediately remove it: the fix is physical (raise the
-antennas), and the anchors are permanently installed. So we did two things.
-
-First, we accepted it and documented it. Second, since a parked rover is genuinely
-stationary, we suppress the \emph{displayed and logged} drift rather than pretend to
-fix the measurement. When the system is confident the rover is stopped, the reported
-position is frozen inside a 5 cm deadband; sustained real movement releases it. While
-moving, a light smoothing filter removes the high-frequency jitter.
-
-We are explicit that this is cosmetic. The raw estimate is still recorded for analysis.
-It makes a parked rover look correct, which it is, without claiming the underlying
-distances improved.
-
-%======================================================================
-\section{A different estimator: moving-horizon estimation}
-
-A Kalman filter looks at one reading at a time and cannot revisit past decisions. A
-moving-horizon estimator (MHE) instead keeps the last $N$ readings and re-solves the
-whole recent trajectory each time. It can reinterpret the recent past in light of new
-evidence.
-
-We minimise, over the entire window at once:
-\begin{equation}
-\min_{\{\mathbf{x}_k\}} \;
-\underbrace{\sum_{k}\sum_{j} w_{kj}\, \rho\big(\lVert \mathbf{p}_k - \mathbf{a}_j\rVert - d_{kj}\big)}_{\text{fit the measurements}}
-\;+\;
-\underbrace{\sum_{k} \lVert \mathbf{x}_{k+1} - f(\mathbf{x}_k) \rVert^2_{Q}}_{\text{obey the motion model}}
-\;+\;
-\underbrace{\lVert \mathbf{x}_1 - \bar{\mathbf{x}} \rVert^2_{P}}_{\text{remember what came before}}
-\end{equation}
-
-The three parts read as: match what the radios measured; do not move in ways the rover
-physically cannot; and stay consistent with what we already believed before this window
-began. The function $\rho$ is a robust loss --- it grows more gently than a square for
-large errors, so a single bad measurement bends the answer slightly instead of
-dragging it.
-
-Implemented with CasADi and IPOPT, it solves in about 3 ms, comfortably fast enough.
-
-\begin{table}[h]
+\begin{figure}[h]
 \centering
-\caption{Moving-horizon estimator versus Kalman filter, same recorded data.}
-\begin{tabular}{@{}lcc@{}}
-\toprule
-& \textbf{Kalman} & \textbf{Moving horizon} \\
-\midrule
-Path smoothness while moving (lower better) & 0.61 & \textbf{0.36} \\
-Lag behind raw measurements & 22 mm & 28 mm \\
-Parked wander (median over positions) & 54 mm & 55 mm \\
-Position error, parked & 64 mm & \textbf{61 mm} \\
-\bottomrule
-\end{tabular}
-\end{table}
+\includegraphics[width=0.8\textwidth]{figures/cir_waterfall_A4.png}
+\caption{Twenty-eight consecutive channel snapshots to anchor A4, aligned on the
+detected first path (red line). The energy \emph{at} the first path is faint; the
+bright band arriving $\sim$25 taps ($\approx$7.5\,m of extra path) later is a
+reflection much stronger than the direct signal.}
+\end{figure}
 
-The moving-horizon estimator is clearly better while moving --- about 40\% smoother for
-6 mm more lag --- and a tie when parked. It is offered as an option rather than made
-the default, because it has one wart: at two of nineteen parked positions it drifts
-about 0.23 m, as the slow breathing pulls the whole window along. Its average position
-stays correct, so this is drift, not bias.
+The picture was unambiguous. The direct path --- the one whose arrival time
+\emph{is} the distance --- sits roughly \textbf{20\,dB below the strongest
+reflection} and only 8--10\,dB above the noise floor. With antennas 24\,cm off the
+floor, the direct ray grazes the ground and its floor reflection arrives almost on
+top of it; the detector locks onto a blend, and as the blend shifts, centimetres of
+apparent distance come and go. A quiet empty room breathed exactly as much as one
+with a person walking (132\,mm peak-to-peak over 81\,s either way): this is the
+geometry, not passers-by.
 
-A safety mechanism proved necessary. The optimiser occasionally settles into a
-different-but-similar solution between steps, causing the answer to jump. We detect
-this --- an output that leaps further than physics allows --- and fall back to the
-measurement-only answer. The first version of this guard fell back to \emph{dead
-reckoning} instead, which is discussed in Section~\ref{sec:failures} because it failed
-spectacularly.
+\begin{result}
+The breathing is per-link multipath caused by low antenna mounting. The genuine fix
+is physical --- raise the antennas (or the tags). The anchors are permanently
+installed, so this is deferred, and the system is honest about carrying a 5--7\,cm
+slow parked drift.
+\end{result}
 
-\subsection{Using the IMU without trusting it}
+\subsection{Living with it: the output pin and smoother}
+\label{sec:pin}
 
-The tag carries an IMU. We measured what it could actually be trusted for:
+A parked rover \emph{is} stationary --- we know it from the IMU and from the solver
+itself. So at the \textbf{display/logging layer only}, when the system is confident
+it is parked, the reported pose freezes: movement within a 5\,cm deadband is
+ignored, a sustained excursion ($\sim$1.5\,s beyond the band) re-pins, and any real
+motion releases instantly. While moving, a light exponential smoother
+($\alpha = 0.6$) takes the high-frequency jitter off, chosen from measurement:
+it removed $\sim$50\,\% of jerk for 25\,mm of lag, whereas tuning the filter's
+process noise managed only 13\,\% for triple the lag (\S\ref{sec:fail-smoothing}).
+
+This is deliberately cosmetic. The estimator state is untouched (A3 showed why
+touching it goes wrong), the raw estimate is what gets logged, and the title bar
+says \code{PIN} whenever the freeze is active. Implementation: the pin/smoother
+block in \gh{matlab/scripts/live\_tag.m}{live\_tag.m}.
+
+\section{The moving-horizon estimator}
+\label{sec:mhe}
+
+\subsection{Why look at more than one reading}
+
+A Kalman filter digests one reading and moves on; it can never revisit a decision.
+A \textbf{moving-horizon estimator} (MHE) keeps the last $N$ readings (here
+$N{=}10$, about two seconds) and, at every step, re-solves the \emph{entire recent
+trajectory}. New evidence gets to reinterpret the recent past. The cost, solved
+over all window states $\{\mathbf{x}_k\}$ at once:
+
+\begin{equation}
+\label{eq:mhe}
+\min_{\{\mathbf{x}_k\}}\;
+\underbrace{\sum_{k}\sum_{j} w_{kj}\,
+\rho\big(\lVert\mathbf{p}_k-\mathbf{a}_j\rVert - d_{kj}\big)}_{\text{fit every distance in the window}}
+\;+\;
+\underbrace{\sum_{k}\big\lVert \mathbf{x}_{k+1}-f(\mathbf{x}_k)\big\rVert^2_{Q^{-1}}}_{\text{move like a real vehicle}}
+\;+\;
+\underbrace{\big\lVert \mathbf{x}_1-\bar{\mathbf{x}}\big\rVert^2_{P^{-1}}}_{\text{respect what came before}}
+\end{equation}
+
+The robust loss is the pseudo-Huber function
+\begin{equation}
+\rho(r) = \delta^2\Big(\sqrt{1+(r/\delta)^2}-1\Big),
+\qquad \delta = 0.15\ \text{m},
+\end{equation}
+which behaves like $r^2/2$ for small errors but grows only \emph{linearly} for
+large ones --- a wild measurement bends the answer instead of dragging it.
+The ``arrival cost'' (third term) is how information older than the window
+survives: the window's first state is softly tied to what the previous solve
+believed.
+
+Implemented in \gh{matlab/+dune/MheEstimator.m}{MheEstimator.m} using
+CasADi~3.7.0 (symbolic derivatives) and IPOPT (the solver). Median solve time:
+\textbf{3\,ms} --- easily real-time at 6\,Hz.
+
+\begin{result}
+Same recorded data, MHE vs Kalman: while \emph{moving}, the MHE track is
+\textbf{40--44\,\% smoother} (jerk 0.36 vs 0.61) for 6\,mm extra lag. Parked, a
+tie (61 vs 64\,mm RMSE). It is offered as an opt-in
+(\code{live\_tag(..., estimator="mhe")}), not the default, because at 2 of 19
+parked spots the breathing slowly drags the whole window $\sim$0.23\,m --- the
+average stays right, but the drift is real.
+\end{result}
+
+\subsection{The jump guard}
+
+IPOPT occasionally lands on a different-but-similar optimum between consecutive
+solves, making the output leap. The guard: if the new answer jumps further from
+the constant-velocity prediction than 0.20\,m (or the solver reports
+non-convergence), discard it, fall back to the \emph{measurement-only} fix, and
+re-seed the window. The first version of this guard fell back to dead reckoning
+instead and diverged nine metres --- the full story is \S\ref{sec:fail-guard},
+and the design rule it taught is printed there in bold.
+
+\subsection{Motion models: using the IMU without trusting it}
+\label{sec:unicycle}
+
+We probed what the tag's IMU can honestly provide (log-based, in
+\S\ref{sec:fail-imuaccel}): its accelerometer bias is $\approx$0, its \emph{turn
+rate} is trustworthy, but its absolute compass direction is rotated by an unknown
+amount. The safe pattern: use \textbf{changes}, never absolutes.
 
 \begin{itemize}
-\item Its acceleration bias is essentially zero --- good.
-\item Its sense of which way is ``north'' is rotated by an unknown amount --- not
-      trustworthy.
-\item The tag lies flat, so its measured turn rate is directly the rover's turn rate.
+\item \textbf{cv} --- constant velocity, gyro optional: the velocity vector is
+      rotated by the measured yaw rate $\omega\,\Delta t$ each step. With
+      $\omega = 0$ it reduces exactly to plain constant velocity, so it can never
+      be worse.
+\item \textbf{unicycle} --- for a car-like vehicle. State
+      $[p_x, p_y, \psi, s]$: heading and forward speed. The gyro drives the
+      heading ($\psi_{k+1} = \psi_k + \omega\,\Delta t$, softly), and velocity is
+      \emph{defined} as $s\,[\cos\psi, \sin\psi]$ --- sideways motion is not
+      representable, because a front-steering car cannot slide sideways. The UWB
+      measurements anchor the absolute heading that the gyro alone cannot know.
 \end{itemize}
 
-This suggested using \emph{changes} rather than absolute values. A gyroscope measuring
-``turning left at 30 degrees per second'' needs no compass and no reference direction.
-So the motion model was extended to let the velocity direction rotate at the measured
-turn rate. When the turn rate is zero this reduces exactly to the previous model, so it
-is safe by construction.
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.9\textwidth]{figures/motion_check.png}
+\caption{The hand-motion check that tuned the smoothing: raw fixes (grey), output
+track (red), detected dwells (yellow). Between-dwell displacements of the
+$\sim$50\,cm hand moves read 0.44--0.58\,m --- the poor man's truth before the
+rover runs existed.}
+\end{figure}
 
-%======================================================================
-\section{Two tags: estimating the whole rover}
+\begin{tryit}
+Compare estimators on any log, no hardware needed:
+\begin{lstlisting}
+mhe_replay("matlab/logs/serial_raw_20260721_202505.log")            % cv
+mhe_replay(log, useImu=true, model="unicycle")                      % car model
+motion_check("matlab/logs/rtls_log_20260721_202505.jsonl")          % metrics
+\end{lstlisting}
+\end{tryit}
 
-The rover carries two tags on a rigid plate, 52.7 cm apart. They cannot move
-independently, and that is valuable information.
+% ============================================================================
+\part{The rover: two tags, one pose}
+% ============================================================================
 
-Rather than computing two positions and comparing them, we estimate one rover pose:
-its centre, its heading $\psi$, and its speed. Both tags are then \emph{derived} from
-that pose:
-\begin{align}
-\mathbf{p}_{\text{front}} &= \mathbf{c} + \tfrac{L}{2}\begin{bmatrix}\cos\psi\\ \sin\psi\end{bmatrix}, &
-\mathbf{p}_{\text{rear}} &= \mathbf{c} - \tfrac{L}{2}\begin{bmatrix}\cos\psi\\ \sin\psi\end{bmatrix}.
-\end{align}
+\section{The rigid-body estimator}
+\label{sec:rigid}
 
-This is a deliberate design choice with three consequences, all free:
+\subsection{One body, not two dots}
 
-\begin{enumerate}
-\item The distance between the tags is \textbf{exactly} 52.7 cm in every answer,
-      because the equations cannot express anything else. It is not a penalty that can
-      be traded away.
-\item ``Both tags are stopped, or both are moving'' is automatic, since there is only
-      one speed.
-\item Heading comes out of the geometry --- which tag is where --- \emph{combined} with
-      the gyroscope's turn rate. Neither source alone is as good.
-\end{enumerate}
+The two tags are bolted to one plate, $L = 0.527$\,m apart (measured antenna
+centre to antenna centre --- it matters, this number becomes exact in the math).
+Estimating them separately throws that knowledge away. Instead,
+\gh{matlab/+dune/MheRigid.m}{MheRigid.m} estimates a single body state
+$[c_x, c_y, \psi, s]$ --- centre, heading, speed --- and \emph{derives} both tags
+from it:
+\begin{equation}
+\mathbf{p}_{\text{front}} = \mathbf{c} + \tfrac{L}{2}
+\begin{bmatrix}\cos\psi\\ \sin\psi\end{bmatrix},
+\qquad
+\mathbf{p}_{\text{rear}} = \mathbf{c} - \tfrac{L}{2}
+\begin{bmatrix}\cos\psi\\ \sin\psi\end{bmatrix}.
+\end{equation}
 
-Because the rover is a car with front steering, it cannot slide sideways. We encoded
-that too, by defining velocity as speed along the heading. Again this is structural:
-sideways motion is not representable.
+\begin{plainwords}
+This is constraint by \emph{construction}, not by penalty --- and the distinction
+is the whole design. A penalty says ``please keep the tags 52.7\,cm apart'' and can
+be outvoted by noisy data. This parameterisation \emph{cannot express} any other
+separation: there is no combination of $c$, $\psi$, $s$ that puts the tags at the
+wrong distance. Three facts come for free: the separation is exact in every
+answer; ``both stopped or both moving'' is automatic (one speed state); and the
+heading is observed by the radios (which end is where) \emph{and} steered by the
+gyro --- better than either source alone.
+\end{plainwords}
 
-The two tags report at different instants. Rather than pairing them up in time, each
-reading becomes its own entry in the window, tagged with which end of the rover it came
-from. No interpolation is needed.
+The two tags report at different instants (the token ring alternates), so there is
+no pairing of readings in time. Each arriving sweep --- from either tag --- becomes
+its own node in the horizon, labelled $+1$ (front) or $-1$ (rear), observing the
+body at its own timestamp. Terrain is handled with the IMU's roll and pitch taken
+\emph{directly} (they are gravity-referenced and excellent, \S\ref{sec:sixdof}):
+on a pitched slope the horizontal tag separation shrinks to $L\cos\theta$ and the
+two antennas sit at heights $z_0 \pm \tfrac{L}{2}\sin\theta$ --- both effects are
+in the measurement model.
 
-Ground slope is handled using the IMU's roll and pitch directly. On a slope the two
-tags are no longer at the same height, and their horizontal separation shrinks to
-$L\cos(\text{pitch})$. Both effects are included.
+How good can the heading be? With per-distance noise $\sigma_d$ and baseline $L$,
+the geometric limit per reading is roughly
+\begin{equation}
+\sigma_\psi \approx \frac{\sqrt{2}\,\sigma_d}{L}
+\;\;\xrightarrow{\;\sigma_d = 30\,\text{mm},\ L = 0.527\,\text{m}\;}\;
+\approx 4.6^\circ\ \text{per reading},
+\end{equation}
+which filtering and the gyro then improve. A longer baseline buys heading accuracy
+linearly --- worth remembering if the plate is ever redesigned.
 
-\subsection{Checking it before trusting it}
+\subsection{Validating before trusting}
+\label{sec:rigidvalid}
 
-Since a sign error here would be invisible but corrupting, we tested against simulated
-data with a known answer before using real measurements: a simulated rover driving an
-arc over the real anchor layout, with realistic 30 mm distance noise.
+A sign error in that parameterisation would be invisible live and poison
+everything. So before any hardware run, a synthetic test
+(\gh{matlab/scripts/test\_mhe\_rigid.m}{test\_mhe\_rigid.m}) drives a simulated
+rover on an arc over the \emph{real} anchor layout with realistic 30\,mm range
+noise, where the true answer is known exactly:
 
 \begin{table}[h]
 \centering
-\caption{Rigid two-tag estimator on simulated data with known truth.}
+\caption{Rigid estimator against known synthetic truth.}
 \begin{tabular}{@{}lccc@{}}
 \toprule
-\textbf{Condition} & \textbf{Centre error (median)} & \textbf{Heading error} & \textbf{Tag separation} \\
+\textbf{Condition} & \textbf{Centre (median)} & \textbf{Heading} & \textbf{Separation}\\
 \midrule
-Flat ground        & 14.1 mm & 1.18$^\circ$ & 0.5000 m (exact) \\
-8.6$^\circ$ slope  & 14.1 mm & 1.17$^\circ$ & matches $L\cos\theta$ \\
-$-11.5^\circ$ slope& 14.2 mm & 1.18$^\circ$ & matches $L\cos\theta$ \\
+Flat                   & 14.1\,mm & 1.18$^\circ$ & 0.5000\,m (exact)\\
+$+8.6^\circ$ pitch     & 14.1\,mm & 1.17$^\circ$ & $= L\cos\theta$ \checkmark\\
+$-11.5^\circ$ pitch    & 14.2\,mm & 1.18$^\circ$ & $= L\cos\theta$ \checkmark\\
 \bottomrule
 \end{tabular}
 \end{table}
 
-%======================================================================
-\section{Getting the data off the rover}
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.88\textwidth]{figures/mhe_rigid_test.png}
+\caption{The synthetic validation: true arc (black) vs the rigid estimate (red),
+and true vs estimated heading. Zero guard trips.}
+\end{figure}
 
-Originally each tag was connected by USB cable. With two tags on a moving rover this
-does not work.
+\begin{tryit}
+Live, with both tags on and broadcasting:
+\begin{lstlisting}
+live_rover(baseline=0.527)
+\end{lstlisting}
+Blue and red dots are the two tags (always exactly the baseline apart --- by
+construction), the purple star is the centre, the arrow is the heading. The title
+shows MHE yaw next to the raw two-fix yaw as a live consistency check. If both
+tags go silent, the display \textbf{freezes and says COASTING} rather than gliding
+away on a prediction --- the lesson of \S\ref{sec:fail-dualtag} baked in.
+\end{tryit}
 
-The tags were already broadcasting every reading over WiFi; only the receiving side was
-missing. A long-standing project note claimed the network blocked this kind of traffic.
-We tested it directly rather than trusting the note, and \textbf{the note was wrong} ---
-both tags reached the computer over WiFi with no changes to the radios at all.
+\section{Driving the rover: truth and radio on one clock}
+\label{sec:rover}
 
-One practical detail: the obvious MATLAB tool for receiving this traffic requires a
-toolbox we do not have. We used the Java networking classes that ship with MATLAB
-instead. This cost us later in an unexpected way (Section~\ref{sec:failures}).
+The final piece closes the loop with ground truth \emph{in motion}. The rover
+already carries an AprilTag that the calibrated Kinect tracks; driving it with both
+UWB tags aboard records, simultaneously and on one clock: where it truly went, and
+what the radios said.
 
-%======================================================================
-\section{Driving the rover: truth and radio together}
-
-The final piece connects everything. The rover already carries a printed marker that
-the ceiling camera tracks. So driving the rover with both tags aboard captures, on one
-clock: the true position from the camera, and the radio measurements from both tags.
-
-We adapted an existing rover teleoperation program (driven by a PS4 controller) to also
-record the radio data. One design decision is worth stating: the position estimator does
-\emph{not} run inside the driving loop. That loop is responsible for the emergency stop,
-and the optimiser occasionally takes 90 ms. Delaying an emergency stop to compute a
-position is a bad trade. The loop only records; the estimator runs afterwards on the
-recording, which gives an identical result.
-
-\subsection{First result}
+\gh{matlab/scripts/rover\_teleop\_uwb.m}{rover\_teleop\_uwb.m} was ported from the
+existing MMS rover teleoperation script (used read-only --- the MMS codebase is not
+modified). It drives the rover with a PS4 controller at 20\,Hz while logging:
+commanded velocities, AprilTag pose, the rover's own IMU and wheel encoders, and
+every UWB sweep from both tags, all POSIX-timestamped.
 
 \begin{table}[h]
 \centering
-\caption{First driven run, 212 seconds. Radio estimate versus camera truth.}
-\begin{tabular}{@{}lc@{}}
+\caption{PS4 controls (unchanged from the original teleop).}
+\small
+\begin{tabular}{@{}ll@{}}
 \toprule
-Frame alignment found & $-3.6^\circ$ rotation, 0.46/0.59 m offset \\
-Median error & 98 mm \\
-RMSE & 268 mm \\
+D-pad up/down & linear speed $\pm$0.01\,m/s (max 0.10)\\
+D-pad left/right & turn rate $\pm$0.01\,rad/s (max 0.107)\\
+R1 & toggle reverse \qquad Square: straighten (turn rate 0)\\
+Circle & \textbf{emergency stop} \qquad Triangle: reset both to zero\\
+PS button & finish and save\\
 \bottomrule
 \end{tabular}
 \end{table}
 
-The trajectory shape matches the camera truth well, which confirms the whole chain
-works. But the numbers are \textbf{not yet trustworthy}, and it would be wrong to quote
-them as system accuracy. Three data quality problems dominate:
+One safety decision is worth its own paragraph: \textbf{the estimator does not run
+inside the driving loop.} That loop services the emergency stop; the MHE
+occasionally takes 90\,ms; delaying an E-stop to compute a position is a bad trade
+in every universe. The loop only \emph{records} (microseconds); estimation happens
+offline on the recording and is bit-identical, since the sweeps are all the
+estimator consumes.
 
-\begin{enumerate}
-\item The camera only saw the marker 58\% of the time, with a long gap. The largest
-      apparent errors fall in stretches where there was no truth to compare against.
-\item One of the two tags reported far less often than the other (386 readings versus
-      1124). The rigid estimator determines heading by seeing \emph{both} ends, so
-      heading was weakly constrained. The safety guard fired on 46\% of solves.
-\item On average only 3.6 of 5 anchors answered each reading, and the worst errors
-      occurred near the edge of the anchor layout where the geometry is poorest.
-\end{enumerate}
+\subsection{Scoring a run}
 
-These are fixable setup problems, not algorithmic ones. Fixing them is the current work.
+\gh{matlab/scripts/rover\_run\_report.m}{rover\_run\_report.m} turns a run into
+numbers. Two frame subtleties are handled explicitly rather than assumed away:
 
-%======================================================================
-\section{What was tried and did not work}
-\label{sec:failures}
+\emph{The lever arm.} The AprilTag is not at the rig centre --- it sits 11.35\,cm
+behind and 10\,cm to the right of it (measured). That offset \emph{rotates with
+the rover}, so truth is de-rotated per sample:
+$\mathbf{c}_{\text{true}} = \mathbf{p}_{\text{tag}} -
+R(\psi)\,\boldsymbol{\ell}$, with $\boldsymbol{\ell} = [-0.1135, -0.10]$\,m.
 
-This section is deliberate. Several of these consumed more time than the successes, and
-a reader repeating this work should know where the holes are.
+\emph{The frame fit.} The camera world and the UWB anchor world are two different
+coordinate systems. The best rigid mapping (rotation $+$ translation, no scale)
+between the two trajectories is found by the classical SVD construction: centre
+both point sets, form the cross-covariance $H = \sum_i \tilde{\mathbf{u}}_i
+\tilde{\mathbf{t}}_i^\top$, decompose $H = U\Sigma V^\top$, and take
+$R = V\,\mathrm{diag}(1, \det(VU^\top))\,U^\top$. Fitting this \emph{from data}
+(rather than assuming the frames coincide) also acts as a cross-check: the
+rotation it finds should be stable run to run.
 
-\subsection{Using the IMU's acceleration to predict motion}
-Feeding accelerometer data into the filter to predict where the rover was heading caused
-divergence of 6--14 metres. The cause was misdiagnosed for a long time as accelerometer
-bias. It was not: measurement later showed the bias is essentially zero. The real problem
-is that the IMU's idea of which direction is which is rotated by an unknown angle, so
-accelerations were applied in the wrong direction. Left disabled. Using only the
-gyroscope's turn rate, which needs no reference direction, works.
+\begin{figure}[h]
+\centering
+\includegraphics[width=\textwidth]{figures/rover_run_trajectory.png}
+\caption{First driven run (212\,s). Top-left: raw fixes and the rigid-MHE track in
+the UWB frame. Top-middle: AprilTag truth. Top-right: the two overlaid after the
+fitted frame transform --- the shapes agree. Bottom row: commanded velocities, UWB
+per-sweep health, truth availability with error over time.}
+\label{fig:roverrun}
+\end{figure}
 
-\subsection{Feeding individual distances to the filter instead of positions}
-In principle, updating the filter with each distance separately is better than
-collapsing them into a position first --- it works with fewer than three anchors. In
-practice it failed badly, giving 2244 mm error against 335 mm. Because the filter
-accepts each distance separately, it can satisfy one or two of them while sitting at a
-completely wrong position, and never notices. It is left available but not default.
+\begin{result}
+First run: median error \textbf{98\,mm}, RMSE 268\,mm, frame fit $-3.6^\circ$ /
+$[-0.46, -0.59]$\,m. The RMSE is stated but \textbf{not yet trusted}, and
+Figure~\ref{fig:roverrun} shows exactly why: the camera saw the marker only
+58\,\% of the time with one long gap (the biggest ``errors'' are unmeasured
+stretches), the rear tag was starved (386 vs 1124 sweeps --- weakly constrained
+heading, 46\,\% guard trips), and only 3.6 of 5 anchors answered on average.
+These are setup problems, not algorithm problems, and they are the current work.
+\end{result}
 
-\subsection{Machine learning for the signal-strength correction}
-We fitted the relationship between signal strength and distance error with a neural
-network, and with a physics-informed network constrained to be monotonic. Tested
-honestly, by holding out entire positions, the plain straight line won:
+\section{The full six degrees of freedom}
+\label{sec:sixdof}
 
-\begin{center}
-\begin{tabular}{@{}lc@{}}
+The rover state we ultimately want is $x, y, z$ and roll, pitch, yaw.
+\gh{matlab/scripts/rover\_pose\_report.m}{rover\_pose\_report.m} compares every
+channel we can observe, from every sensor that observes it
+(Figure~\ref{fig:sixdof}).
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=\textwidth]{figures/rover_run_6dof.png}
+\caption{All six channels from the first run. Blue is the AprilTag; red/green are
+the two IMUs; magenta is the UWB rigid-MHE yaw. Note pitch and roll: the camera
+(blue) swings tens of degrees while the two independent IMUs agree with each other
+and stay flat --- the camera is the outlier there.}
+\label{fig:sixdof}
+\end{figure}
+
+\begin{pitfall}
+Two traps found while making this plot. The AprilTag angles are in
+\emph{radians} but the rover's onboard IMU reports \emph{degrees} --- verified
+from the data ranges, not assumed. And every sensor defines ``zero heading''
+differently (marker print orientation, IMU mounting, anchor frame), so channels
+are compared after removing a constant offset (a circular mean); the offsets
+themselves are reported and should stay stable run to run.
+\end{pitfall}
+
+The comparison produced the most useful architectural fact of the rover phase:
+\textbf{the camera is only trustworthy in-plane.} Its $z$ wanders with 157\,mm
+standard deviation over a flat floor; its pitch and roll swing by tens of degrees
+while the two \emph{independent} gravity-referenced IMUs agree with each other to
+a few degrees. A small, flat, distant marker simply does not constrain
+out-of-plane pose well --- a known weakness, now measured in our own data. The
+IMUs win those channels: gravity is an absolute reference.
+
+\begin{table}[h]
+\centering
+\caption{Who to believe, per channel --- the sensors are complementary.}
+\begin{tabular}{@{}llll@{}}
 \toprule
-\textbf{Model} & \textbf{Position error} \\
+\textbf{Channel} & \textbf{Best source} & \textbf{Quality} & \textbf{Truth for scoring}\\
 \midrule
-Straight line & \textbf{98 mm} \\
-Neural network & 107 mm \\
-Physics-informed network & 108 mm \\
+$x, y$      & UWB rigid MHE & 98\,mm median (first run) & AprilTag (in-plane: valid)\\
+yaw         & UWB rigid MHE & \textbf{7.3$^\circ$ RMS}  & AprilTag (in-plane: valid)\\
+roll, pitch & IMU           & few degrees, absolute     & IMUs themselves (gravity)\\
+$z$         & --- (fixed)   & ---                       & none good yet\\
 \bottomrule
 \end{tabular}
-\end{center}
+\end{table}
 
-The relationship really is a straight line over the range that occurs; the extra
-capacity only fitted noise. With 31,500 samples but only 19 distinct positions, the
-effective sample size was 19, not 31,500.
+Two notes on that table. The UWB yaw agreeing with camera yaw at 7.3$^\circ$ RMS
+--- with a residual frame offset of only 1.4$^\circ$ after a transform fitted from
+\emph{position} data alone --- is a strong consistency check: heading and position
+tell the same story. And $z$ is not a software gap: all five anchors sit at the
+same height, so the radio geometry contains almost no vertical information. If $z$
+ever matters, anchors must move to different heights; no algorithm can conjure
+observability that the geometry does not contain.
 
-\subsection{Absorbing the drift into the filter's internal states}
-Since a parked rover is stationary, we tried inverting the filter's assumptions while
-stopped: trust the position completely, and let the per-anchor bias values absorb the
-drift. This made things dramatically worse, 91 mm to 319 mm. The reason is instructive:
-the biases learned at one position are wrong at the next, and because they are
-deliberately remembered, the error propagates. This confirmed that the drift cannot be
-absorbed inside the estimator and must be handled at the output, or fixed physically.
+% ============================================================================
+\part{Hindsight}
+% ============================================================================
 
-\subsection{A safety guard that made things worse}
-The guard protecting the moving-horizon estimator from occasional jumps originally fell
-back to dead reckoning --- continuing at the last known velocity. This created a runaway:
-once it diverged, the real answer looked like a jump, so the guard engaged again, and
-the estimate walked 9 metres away. It fired on 73\% of solves. The fix was to fall back
-to the measurement-only position, which cannot run away. The trip rate fell to 3\%.
-General lesson: a fallback must be anchored to measurements, never to prediction alone.
+\section{What we tried that did not work}
+\label{sec:failures}
+
+Kept deliberately, at full length. Several of these consumed more effort than the
+things that worked, and each ends with the rule it taught.
+
+\subsection{Predicting motion from the accelerometer}
+\label{sec:fail-imuaccel}
+Feeding the IMU's acceleration into the filter's prediction diverged by 6--14\,m.
+For a long time we blamed accelerometer bias --- the classic culprit. Later
+measurement showed the bias is essentially zero
+($[-0.007, -0.026, +0.013]$\,m/s$^2$ at rest); the real fault is that the IMU's
+absolute orientation frame is \emph{rotated} by an unknown amount, so perfectly
+good accelerations were applied in the wrong direction, and the gate then locked
+out the corrections that would have caught it. Gyro turn \emph{rate} needs no
+absolute frame and works fine. \textbf{Rule: diagnose which property is broken
+(bias vs frame) before designing the fix --- and prefer differential quantities
+when an absolute reference is unverified.}
+
+\subsection{Feeding raw distances into the filter}
+Updating the Kalman filter with each distance separately (tightly-coupled) is
+textbook-better: it works with fewer than three anchors. On real data it scored
+2244\,mm against 335\,mm loosely-coupled. With per-distance gating, the filter can
+sit at a wrong position that keeps one or two distances happy and reject the rest
+forever --- self-consistent and wrong. Robust updates later tamed it (105\,mm) but
+never beat the simple version. \textbf{Rule: a partial-acceptance mechanism needs a
+global sanity anchor, or it will find a lie it likes.}
+
+\subsection{Machine learning for the power correction}
+\label{sec:fail-ml}
+The straight-line power correction (\S\ref{sec:powerbias}) was challenged with an
+MLP and a physics-informed network with a monotonicity prior. Scored honestly ---
+leave-one-\emph{position}-out --- the line won: 98\,mm vs 107 vs 108. There were
+31\,500 samples but only 19 independent positions; the effective sample size was
+19, and extra capacity fitted noise. \textbf{Rule: count independent conditions,
+not rows; and make the baseline a straight line before reaching for a network.}
+
+\subsection{Absorbing the parked drift into the filter}
+\label{sec:fail-inversion}
+While parked, why not trust position fully and let the per-anchor bias states soak
+up the breathing? Because the biases are \emph{spot-specific}: values learned at
+one parking spot are wrong at the next, and the whole point of bias states is that
+they are remembered. The error compounded across dwells: 91\,mm $\to$ 319\,mm.
+\textbf{Rule: never let a long-memory state absorb a location-dependent error.}
+
+\subsection{The guard that dead-reckoned into the wall}
+\label{sec:fail-guard}
+The MHE jump guard originally fell back to the constant-velocity prediction. Once
+one bad solve slipped through, the prediction walked; every subsequent honest
+answer now looked like a ``jump'' relative to it, so the guard kept rejecting
+reality --- a self-reinforcing runaway that ended nine metres off, with the guard
+firing on 73\,\% of solves. Falling back to the measurement-only fix instead ended
+the class of failure (3\,\% trips). \textbf{Rule: a fallback must be anchored to
+measurements; a fallback anchored to prediction can chase its own tail.}
 
 \subsection{Two independent tag estimates}
-Our first two-tag attempt tracked each tag separately. During one run both tags' displays
-slid several metres apart while physically 30 cm apart. Diagnosis found two causes: two
-anchors had lost power, leaving three nearly in a line, so the solver correctly refused
-to answer; and with no answer, the display followed the filter's dead-reckoned guess
-instead of stopping. This work was rolled back and replaced by the rigid single-pose
-formulation, which cannot express the two tags drifting apart. The display now freezes
-and says so when measurements stop.
+\label{sec:fail-dualtag}
+The first dual-tag design ran two separate estimators and drew both. In one live
+session the two dots slid $\sim$3.5\,m apart while the physical tags sat 30\,cm
+apart. Two stacked causes: two anchors' batteries died mid-run, leaving three
+nearly-collinear anchors --- so the solver \emph{correctly} refused to answer
+(mirror ambiguity, \S\ref{sec:solver}); and with no fixes arriving, the display
+followed each filter's dead-reckoned prediction instead of freezing. The redesign
+went to the single rigid pose (\S\ref{sec:rigid}) --- which \emph{cannot express}
+the tags drifting apart --- plus a display that freezes and says
+\code{COASTING}, plus per-anchor health markers so a dying anchor is seen in
+seconds. \textbf{Rule: make impossible states unrepresentable, and never display a
+prediction as if it were a measurement.}
 
 \subsection{Tuning the motion model for smoothness}
-To smooth a jagged track, the obvious knob is the filter's assumed acceleration noise.
-Sweeping it from 0.8 to 0.1 gave only 13\% improvement while tripling the lag. The
-reason is that most of the roughness is the slow breathing, which sits in the same
-frequency range as real motion; no filter can separate them. A light smoothing filter on
-the \emph{output} achieved 50\% improvement for 25 mm of lag.
+\label{sec:fail-smoothing}
+The obvious smoothness knob --- filter process noise --- was swept from 0.8 down
+to 0.1\,m/s$^2$: only 13\,\% less jerk for $3\times$ the lag. The roughness lives
+at the same timescale as genuine manoeuvres, so the model cannot separate them; a
+light \emph{output} smoother achieved 50\,\% for 25\,mm of lag.
+\textbf{Rule: identify which layer owns an error before tuning; cosmetic errors
+get cosmetic fixes.}
 
-\subsection{The gyroscope turn model showed no benefit --- yet}
-Adding gyroscope-driven turning produced no measurable improvement (0.357 versus 0.362).
-This is not evidence it is useless: the test data was a hand-carried tag doing
-stop-and-go straight moves with no sustained turns. It remains unvalidated rather than
-disproven, pending a rover driving real arcs.
+\subsection{The gyro turn model that showed nothing --- yet}
+On hand-carried test data, adding the gyro coordinated-turn made no measurable
+difference (jerk 0.357 vs 0.362). The data contained no sustained turns to
+exploit --- a hand slides; it does not arc like a car. Unvalidated is not
+disproven; the rover's arcs are where it should pay. \textbf{Rule: a negative
+result only counts if the data actually exercises the mechanism.}
 
-\subsection{Camera lens distortion correction}
-Fitting a distortion model to a lens with less than 1.5 pixels of distortion produced a
-nonsensical lens centre, because it was fitting clicking noise. Skipped deliberately.
+\subsection{Correcting a lens that needed none}
+Fitting distortion to a lens with $<1.5$\,px of bow produced garbage parameters
+from click noise (\S\ref{sec:camera}). \textbf{Rule: measure the size of an effect
+before modelling it.}
 
-\subsection{Old calibration values surviving reprogramming}
-Reprogramming the anchors does not erase their stored calibration constants. Wrong values
-from months earlier were silently in use, causing metre-scale errors that looked like a
-software bug. Any future rebuild should explicitly clear this memory first.
+\subsection{Calibration that survived reflashing}
+The NVS trap of \S\ref{sec:delay}: stored calibration outliving firmware, causing
+metre-scale ``bugs''. \textbf{Rule: wipe persistent storage on bring-up, and make
+devices print their active calibration at boot.}
 
-\subsection{A self-inflicted performance collapse}
-When the radio recording was added to the rover driving program, the controller became
-unresponsive. The cause was mine, not the hardware. Three mistakes compounded:
-the large recording arrays were placed inside a structure that MATLAB copies on every
-loop iteration; the network socket was polled twice per iteration, each poll costing
-15 ms because it waits for a timeout exception; and a convenient timestamp function cost
-0.64 ms per call. Together these slowed the loop from 20 Hz to 1.4 Hz. Button presses
-last about 200 ms, so at 1.4 Hz most were simply never observed. The loop now reports its
-own rate and warns when it is too slow to catch input.
+\subsection{The 20\,Hz loop that became 1.4\,Hz}
+\label{sec:fail-loop}
+When UWB recording was added to the rover teleop, the PS4 stopped ``working''.
+The controller was fine --- the loop had silently slowed to 1.4\,Hz, and a 200\,ms
+button press fits entirely between two 700\,ms polls. Three self-inflicted costs:
+the big recording arrays were placed \emph{inside} the struct that a logging
+function takes by value (MATLAB copy-on-write duplicated $\sim$13\,MB per
+iteration); the UDP socket was polled twice per loop at $\sim$15\,ms per empty
+poll (Java timeout exception); and a timezone-aware timestamp call cost 0.64\,ms
+each. All were found by measurement, not inspection
+(\S the benchmark lives in the commit message of \code{2703da1}). The loop now
+prints its own achieved rate and warns below 8\,Hz.
+\textbf{Rule: real-time loops get instrumented, always --- a slow loop looks
+exactly like broken hardware.}
 
-\subsection{Deferred rather than failed}
-Two items were designed but set aside: a broadcast-based ranging protocol that would
-measure all anchors simultaneously (it requires reprogramming every anchor), and raising
-the antennas to escape the ground-reflection problem (the anchors are permanently
-mounted). Both remain the most promising routes to reducing the residual drift at its
-source.
+\subsection{Deferred, not failed}
+Two designed-but-parked items, both aimed at the breathing's root cause: raising
+the tags/antennas out of the ground-grazing zone (the anchors cannot move; a mast
+for the tags is the practical variant), and a broadcast ranging protocol (one
+poll, all anchors answer in slots --- all boards need reflashing). And one
+firmware fix sits staged but unflashed: the diagnostic temperature/CFO reads
+currently return zeros due to two read-timing bugs, found and fixed in commit
+\code{ac5743c}.
 
-%======================================================================
-\section{Where things stand}
+\section{Where things stand, and the road ahead}
+\label{sec:roadmap}
 
-The system is built and works end to end. Distances are calibrated, positions are
-computed and filtered, two tags give a full rover pose including heading, data reaches
-the computer wirelessly, and a driven rover records radio measurements and camera truth
-together for scoring.
+Built and working end to end: calibrated ranging, robust solving, two filters, a
+rigid two-tag pose with heading, wireless transport, live displays with honest
+failure behaviour, a teleoperated rover that records truth and radio together, and
+offline scoring. The build phase is closed; the work now is
+\textbf{testing and tuning}:
 
-The remaining error is understood rather than mysterious. It comes from antennas mounted
-low, where the direct signal path and its floor reflection blend together. This is a
-physical arrangement problem, and we know what would fix it.
+\begin{enumerate}
+\item \textbf{Data quality of truth runs} --- keep the AprilTag in the camera's
+      view (58\,\% coverage made the first run's RMSE meaningless); find why tag
+      240 was starved of sweeps; keep all five anchors alive (fresh batteries,
+      watch the health markers).
+\item \textbf{Score the estimator family} on clean runs: Kalman vs MHE-cv vs
+      MHE-unicycle vs rigid --- same logs, same truth, one table.
+\item \textbf{Validate the gyro-turn and no-slip models} on real arcs, checking
+      the gyro sign convention on the vehicle.
+\item \textbf{If parked drift must shrink}: the physical fixes --- tag mast
+      first, then the deferred diagnostics (locked-room dwell with the repaired
+      temperature/CFO telemetry).
+\end{enumerate}
 
-The honest current numbers are: about 94 mm for a single reading standing still, 60--65 mm
-after filtering, and a driven-run figure that is not yet meaningful because the reference
-data was incomplete. Improving that measurement --- not the algorithms --- is the
-immediate next task.
+The honest closing numbers: \textbf{94\,mm} for one raw reading parked;
+\textbf{60--65\,mm} filtered; \textbf{7.3$^\circ$} heading against truth;
+\textbf{14\,mm / 1.2$^\circ$} for the rigid estimator when the data is clean
+(synthetic); and a moving-accuracy number that awaits a clean run to be worth
+printing.
+
+% ============================================================================
+\appendix
+\part*{Appendices}
+\addcontentsline{toc}{part}{Appendices}
+
+\section{Every runnable tool}
+\label{app:tools}
+
+\begin{table}[h]
+\centering\small
+\caption{Scripts in \ghdir{matlab/scripts}{matlab/scripts/}, grouped by purpose.}
+\begin{tabular}{@{}p{4.6cm}p{9.6cm}@{}}
+\toprule
+\textbf{Live} & \\
+\gh{matlab/scripts/live\_tag.m}{live\_tag.m} & One tag, serial or UDP; EKF or MHE;
+pin, smoother, anchor health.\\
+\gh{matlab/scripts/live\_rover.m}{live\_rover.m} & Both tags over UDP; rigid pose,
+heading arrow, coast guard.\\
+\gh{matlab/scripts/rover\_teleop\_uwb.m}{rover\_teleop\_uwb.m} & PS4 drive +
+truth + UWB capture on one clock.\\
+\midrule
+\textbf{Calibration} & \\
+\gh{matlab/scripts/tune\_delays\_sweep.m}{tune\_delays\_sweep.m} & Anchor antenna
+delays against clicked truth.\\
+\gh{matlab/scripts/tune\_tag\_delay.m}{tune\_tag\_delay.m} & A tag's own delay.\\
+\gh{matlab/scripts/anchor\_delay\_tool.m}{anchor\_delay\_tool.m} & Read/set/reset
+NVS delays over the air.\\
+\gh{matlab/scripts/static\_accuracy.m}{static\_accuracy.m} & Multi-spot campaign
+harness.\\
+\midrule
+\textbf{Analysis / replay} & \\
+\gh{matlab/scripts/replay\_rtls.m}{replay\_rtls.m} & Re-run the exact live chain
+from a log.\\
+\gh{matlab/scripts/ekf\_replay.m}{ekf\_replay.m} & Kalman study on a log, with
+static scoring.\\
+\gh{matlab/scripts/mhe\_replay.m}{mhe\_replay.m} & MHE vs EKF comparison.\\
+\gh{matlab/scripts/motion\_check.m}{motion\_check.m} & Still/moving segmentation,
+displacement and smoothness metrics.\\
+\gh{matlab/scripts/phase\_a\_forensics.m}{phase\_a\_forensics.m} & The breathing
+investigation (A1/A2).\\
+\gh{matlab/scripts/cir\_capture.m}{cir\_capture.m} & Channel impulse response
+waterfalls.\\
+\gh{matlab/scripts/test\_mhe\_rigid.m}{test\_mhe\_rigid.m} & Synthetic rigid-body
+validation.\\
+\gh{matlab/scripts/rover\_run\_report.m}{rover\_run\_report.m} & Trajectory vs
+truth scoring.\\
+\gh{matlab/scripts/rover\_pose\_report.m}{rover\_pose\_report.m} & Full 6-DOF
+channel comparison.\\
+\gh{matlab/scripts/udp\_probe.m}{udp\_probe.m} & Is UDP arriving at all?\\
+\gh{matlab/scripts/joy\_probe.m}{joy\_probe.m} & What does the game controller
+actually report?\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Key parameters and where they live}
+\label{app:params}
+
+\begin{table}[h]
+\centering\small
+\caption{Defaults that shape behaviour. All changeable per-call.}
+\begin{tabular}{@{}llp{6.6cm}@{}}
+\toprule
+\textbf{Parameter} & \textbf{Default} & \textbf{Meaning / where}\\
+\midrule
+\code{tagZ} & 0.24\,m & Tag antenna height; fixes the solve to 2-D.\\
+\code{sigmaAccelCV} & 0.8\,m/s$^2$ & Filter responsiveness while moving.\\
+\code{sigmaAccelStill} & 0.05 & \ldots and while parked (stillMode).\\
+\code{pinRadius} & 0.05\,m & Output-pin deadband (\code{live\_tag}, \code{live\_rover}).\\
+\code{smooth} & 0.6 & Output smoother strength; 1 = off.\\
+\code{horizon} & 10--12 & MHE window length (sweeps).\\
+\code{huberDelta} & 0.15\,m & Where the robust loss switches to linear.\\
+\code{maxJump} & 0.20\,m & MHE jump-guard threshold.\\
+\code{baseline} & 0.527\,m & Tag separation --- exact in the rigid model; re-measure
+if the plate changes.\\
+\code{gapThreshDb} & 3\,dB & NLOS weight knee (rx$-$fp gap).\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Glossary}
+\label{app:glossary}
+
+\begin{description}[style=nextline]
+\item[Anchor / tag] Fixed radio at a known position / mobile radio being located.
+\item[DS-TWR] Double-sided two-way ranging; the four-timestamp exchange of
+  \S\ref{sec:twr} that cancels clock-rate error.
+\item[Antenna delay] Per-board constant for time spent inside the electronics;
+  1 tick $=$ 4.69\,mm.
+\item[First-path power] Strength of the earliest-arriving signal component ---
+  the direct ray, ideally.
+\item[NLOS] Non-line-of-sight: the direct path is blocked; energy arrives late
+  via reflections.
+\item[CIR] Channel impulse response --- the received energy tap by tap
+  ($\approx$30\,cm per tap); the radio's own picture of the room's echoes.
+\item[ZUPT] Zero-velocity update: telling the filter ``it is stationary'' as a
+  measurement.
+\item[NIS / $\chi^2$ gate] ``How many sigmas of surprise'' a measurement carries,
+  and the acceptance threshold on it.
+\item[MHE] Moving-horizon estimation: re-solving the recent trajectory over a
+  sliding window (\S\ref{sec:mhe}).
+\item[Arrival cost] The MHE term that ties the window's start to prior belief, so
+  old information is not forgotten.
+\item[Unicycle model] Vehicle model with heading + forward speed and no sideways
+  motion --- a front-steering car.
+\item[Breathing] Our name for the slow (5--7\,cm, seconds-to-minutes) parked
+  drift caused by ground-grazing multipath (\S\ref{sec:breathing}).
+\item[Lever arm] The fixed offset between a sensor and the reference point it is
+  supposed to measure; rotates with the body.
+\end{description}
+
+\section*{References}
+\begin{itemize}
+\item DecaWave, \emph{DW1000 User Manual} --- the radio's registers, timestamps,
+      and diagnostics.
+\item DecaWave application notes \emph{APS011} (received-power bias) and
+      \emph{APS006} (NLOS detection metrics).
+\item Neirynck et al., \emph{An alternative double-sided two-way ranging method},
+      2016 --- the product-form formula of Eq.~\eqref{eq:dstwr}.
+\item Thomas Trojer's \code{arduino-dw1000} driver (Apache 2.0) --- the vendored
+      base of \ghdir{libraries/UwbRtls/src/dw1000}{dw1000/}.
+\item Andersson et al., \emph{CasADi: a software framework for nonlinear
+      optimization}, and W\"achter \& Biegler, \emph{IPOPT} --- the tools behind
+      \S\ref{sec:mhe}.
+\item Umeyama, \emph{Least-squares estimation of transformation parameters
+      between two point patterns}, 1991 --- the frame fit of \S\ref{sec:rover}.
+\item Olson, \emph{AprilTag: a robust and flexible visual fiducial system}, 2011.
+\end{itemize}
 
 \end{document}
