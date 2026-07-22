@@ -227,17 +227,22 @@ data.commanded_motor_rpm = zeros(MAX_SAMPLES, 6);
 data.steering_angles = zeros(MAX_SAMPLES, 4);
 
 % --- UWB block (DUNE addition) ---
-data.uwb = struct();
-data.uwb.anchorIds = A.ids(:)';
-data.uwb.t_posix = nan(MAX_UWB, 1);
-data.uwb.t_rel   = nan(MAX_UWB, 1);      % seconds since test start
-data.uwb.tag     = nan(MAX_UWB, 1);
-data.uwb.R       = nan(MAX_UWB, uwbM);   % raw range per anchor (m)
-data.uwb.RX      = nan(MAX_UWB, uwbM);
-data.uwb.FP      = nan(MAX_UWB, uwbM);
-data.uwb.quat    = nan(MAX_UWB, 4);      % tag-240 IMU tail (NaN for 241)
-data.uwb.gyro    = nan(MAX_UWB, 3);
-data.uwb.acc     = nan(MAX_UWB, 3);
+% IMPORTANT: kept in its OWN variable, NOT inside `data`. logDataPointHW takes
+% `data` by value and modifies it, so MATLAB copy-on-write duplicates the whole
+% struct every iteration - burying ~13 MB of UWB arrays in there collapsed the
+% control loop to ~1.4 Hz (PS4 presses were missed between polls). Merged into
+% `data` once, at save time.
+uwb = struct();
+uwb.anchorIds = A.ids(:)';
+uwb.t_posix = nan(MAX_UWB, 1);
+uwb.t_rel   = nan(MAX_UWB, 1);      % seconds since test start
+uwb.tag     = nan(MAX_UWB, 1);
+uwb.R       = nan(MAX_UWB, uwbM);   % raw range per anchor (m)
+uwb.RX      = nan(MAX_UWB, uwbM);
+uwb.FP      = nan(MAX_UWB, uwbM);
+uwb.quat    = nan(MAX_UWB, 4);      % tag-240 IMU tail (NaN for 241)
+uwb.gyro    = nan(MAX_UWB, 3);
+uwb.acc     = nan(MAX_UWB, 3);
 uwb_idx = 1;
 
 metadata = struct();
@@ -301,6 +306,8 @@ currentV = 0; currentOmega = 0; reverseMode = false;
 segment = 1; sample_idx = 1; loop_count = 0;
 nUwbTag = containers.Map({UWB_FRONT_TAG, UWB_REAR_TAG}, {0, 0});
 lastUwbT = NaN;
+tSensors = 0; tUwb = 0;          % cumulative section timing (loop-rate diag)
+lastRateT = 0; lastRateN = 0; loopHz = NaN;
 
 test_start_time = tic;
 test_start_posix = posixtime(datetime('now', 'TimeZone', 'UTC'));
@@ -328,6 +335,8 @@ try
         old_V = currentV; old_omega = currentOmega; old_reverse = reverseMode;
 
         %% --- D-pad: V and omega (debounced on state change) ---
+        % NOTE: kept byte-identical to the known-good original. Do not
+        % "improve" this while the port is still being debugged.
         if pov ~= prev_pov && pov >= 0
             if pov == 0
                 currentV = min(currentV + V_INCREMENT, V_MAX);
@@ -397,37 +406,46 @@ try
 
         %% --- Log rover data ---
         if sample_idx <= MAX_SAMPLES
-            data.t_posix(sample_idx) = posixtime(datetime('now', 'TimeZone', 'UTC'));
+            % fast absolute clock: start + elapsed. posixtime(datetime(...,TZ))
+            % costs ~0.6 ms per call, which is dead weight in a 20 Hz loop.
+            data.t_posix(sample_idx) = test_start_posix + current_time;
+            tS = tic;
             [data, sample_idx] = logDataPointHW(hw, data, sample_idx, current_time, ...
                 segment, V_cmd, omega_cmd, GEAR_RATIO, MAX_RETRIES, RETRY_DELAY);
+            tSensors = tSensors + toc(tS);
         end
 
         %% --- Drain UWB (cheap: no solving, no MHE - see header note) ---
         if UWB_ENABLE
+            tU = tic;
             for c = tu.drain()
                 s = c{1};
                 if uwb_idx > MAX_UWB, break; end
                 if ~ismember(s.tag, [UWB_FRONT_TAG, UWB_REAR_TAG]), continue; end
-                data.uwb.t_posix(uwb_idx) = s.thost;
-                data.uwb.t_rel(uwb_idx)   = s.thost - test_start_posix;
-                data.uwb.tag(uwb_idx)     = s.tag;
+                uwb.t_posix(uwb_idx) = s.thost;
+                uwb.t_rel(uwb_idx)   = s.thost - test_start_posix;
+                uwb.tag(uwb_idx)     = s.tag;
                 for m = 1:numel(s.ids)
                     col = find(A.ids == s.ids(m), 1);
                     if isempty(col), continue; end
-                    data.uwb.R(uwb_idx, col)  = s.dist(m);
-                    data.uwb.RX(uwb_idx, col) = s.rx(m);
-                    data.uwb.FP(uwb_idx, col) = s.fp(m);
+                    uwb.R(uwb_idx, col)  = s.dist(m);
+                    uwb.RX(uwb_idx, col) = s.rx(m);
+                    uwb.FP(uwb_idx, col) = s.fp(m);
                 end
                 if ~isempty(s.imu)
-                    data.uwb.quat(uwb_idx, :) = s.imu.quat(:)';
-                    data.uwb.gyro(uwb_idx, :) = s.imu.gyro(:)';
-                    data.uwb.acc(uwb_idx, :)  = s.imu.acc(:)';
+                    uwb.quat(uwb_idx, :) = s.imu.quat(:)';
+                    uwb.gyro(uwb_idx, :) = s.imu.gyro(:)';
+                    uwb.acc(uwb_idx, :)  = s.imu.acc(:)';
                 end
                 if nUwbTag.isKey(s.tag), nUwbTag(s.tag) = nUwbTag(s.tag) + 1; end
                 lastUwbT = current_time;
                 uwb_idx = uwb_idx + 1;
             end
-            tu.drainEvents();     % discard boot/ack chatter, keep the queue small
+            % drainEvents() pumps the socket a SECOND time (~15 ms each, the
+            % cost is a Java socket-timeout exception), so only flush the event
+            % queue occasionally - drain() above already collected the sweeps.
+            if mod(loop_count, 40) == 0, tu.drainEvents(); end
+            tUwb = tUwb + toc(tU);
         end
 
         %% --- Update status display ---
@@ -473,9 +491,21 @@ try
         %% --- Console status print ---
         if toc(last_status_print) >= STATUS_PRINT_INTERVAL
             rev_tag = ''; if reverseMode, rev_tag = ' [REV]'; end
-            fprintf('[%5.1fs] V=%+.3f omega=%+.3f seg=%d n=%d uwb=%d%s\n', ...
+            % Achieved loop rate + where the time goes. This MATTERS: PS4
+            % presses are caught by rising-edge detection between polls, so a
+            % loop much below ~10 Hz silently drops button presses.
+            dN = (sample_idx - 1) - lastRateN;
+            dT = current_time - lastRateT;
+            if dT > 0, loopHz = dN / dT; end
+            lastRateN = sample_idx - 1; lastRateT = current_time;
+            warnStr = '';
+            if isfinite(loopHz) && loopHz < 8
+                warnStr = '  <-- SLOW LOOP: PS4 presses will be missed';
+            end
+            fprintf('[%5.1fs] V=%+.3f omega=%+.3f seg=%d n=%d uwb=%d %.1fHz (sens %.0f%% uwb %.0f%%)%s%s\n', ...
                 current_time, V_cmd, omega_cmd, segment, sample_idx - 1, ...
-                uwb_idx - 1, rev_tag);
+                uwb_idx - 1, loopHz, 100*tSensors/max(current_time,1e-3), ...
+                100*tUwb/max(current_time,1e-3), rev_tag, warnStr);
             last_status_print = tic;
         end
 
@@ -532,7 +562,7 @@ if UWB_ENABLE
         UWB_FRONT_TAG, nUwbTag(UWB_FRONT_TAG), UWB_REAR_TAG, nUwbTag(UWB_REAR_TAG));
     if total_uwb > 0 && total_samples > 0
         fprintf('  UWB rate: %.1f Hz total\n', total_uwb / max(data.time(total_samples), 0.01));
-        nAnch = sum(~isnan(data.uwb.R(1:total_uwb, :)), 2);
+        nAnch = sum(~isnan(uwb.R(1:total_uwb, :)), 2);
         fprintf('  anchors/sweep: mean %.1f of %d\n', mean(nAnch), uwbM);
     end
     if nUwbTag(UWB_FRONT_TAG) == 0 || nUwbTag(UWB_REAR_TAG) == 0
@@ -553,9 +583,10 @@ if total_samples > 0
     data.imu_accuracy = data.imu_accuracy(1:total_samples);
 
     uf = {'t_posix','t_rel','tag'};
-    for k = 1:numel(uf), data.uwb.(uf{k}) = data.uwb.(uf{k})(1:total_uwb); end
+    for k = 1:numel(uf), uwb.(uf{k}) = uwb.(uf{k})(1:total_uwb); end
     uf2 = {'R','RX','FP','quat','gyro','acc'};
-    for k = 1:numel(uf2), data.uwb.(uf2{k}) = data.uwb.(uf2{k})(1:total_uwb, :); end
+    for k = 1:numel(uf2), uwb.(uf2{k}) = uwb.(uf2{k})(1:total_uwb, :); end
+    data.uwb = uwb;      % merge ONCE, after the loop (see the note at its init)
 
     metadata.data_quality.total_samples = total_samples;
     metadata.data_quality.total_segments = segment;
