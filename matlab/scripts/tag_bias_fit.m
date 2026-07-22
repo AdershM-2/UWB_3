@@ -66,7 +66,7 @@ for tagId = tags(:)'
     p = [NaN NaN];
     for it = 1:30
         [p, info] = dune.multilaterate(A.pos, corr - bTag, ...
-            weights=w, tagZ=opts.tagZ, gateK=0, x0=p);
+            weights=w, tagZ=opts.tagZ, huberDelta=Inf, x0=p);
         if any(isnan(p)), break; end
         used = info.used;
         step = sum(w(used) .* info.resid(used)) / sum(w(used));

@@ -3,7 +3,7 @@ function w = gapWeights(gapDb, threshDb, floorW)
 %   w = dune.gapWeights(gap)  with gap in dB. Same rule as the previous
 %   pipeline: unity weight up to the LOS threshold, then 10^(-excess/10),
 %   floored so a suspect anchor is de-emphasised but never fully dropped
-%   (the MAD gate in multilaterate handles hard outliers).
+%   (the pseudo-Huber loss in multilaterate bounds hard outliers).
 %   NaN gap (no diagnostics) -> weight 1.
 
 arguments

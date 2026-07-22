@@ -142,7 +142,7 @@ for k = 1:M
     c = find(A.ids == opts.ids(k), 1);
     if ~isempty(c), r(c) = med(k); end
 end
-p = dune.multilaterate(A.pos, r, tagZ=truth.tag_z, gateK=0);
+p = dune.multilaterate(A.pos, r, tagZ=truth.tag_z, huberDelta=Inf);
 posErr = 1000 * norm(p - [tagTruth.x, tagTruth.y]);
 fprintf('  position (%.3f, %.3f) vs clicked truth (%.3f, %.3f): 2D error %.0f mm\n', ...
         p(1), p(2), tagTruth.x, tagTruth.y, posErr);

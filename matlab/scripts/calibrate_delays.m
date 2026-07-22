@@ -270,7 +270,7 @@ for k = 1:numel(ids)
     c = find(A.ids == ids(k), 1);
     if ~isempty(c), r(c) = med(k); end
 end
-p = dune.multilaterate(A.pos, r, tagZ=tagZ, gateK=0);
+p = dune.multilaterate(A.pos, r, tagZ=tagZ, huberDelta=Inf);
 errMm = 1000 * norm(p - [tagTruth.x, tagTruth.y]);
 end
 

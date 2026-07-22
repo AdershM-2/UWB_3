@@ -20,10 +20,11 @@ function [pos, info] = solveSweep(sweep, A, opts)
 %   opts.x0      warm-start position [1x2] (default: weighted centroid)
 %   opts.useGapWeights  NLOS soft weights from rx-fp gap (default true)
 %   opts.gapThreshDb, opts.gapFloorW  -> dune.gapWeights (defaults 3, 0.05)
-%   opts.gateK   MAD outlier gate -> dune.multilaterate (default 3)
+%   opts.huberDelta  pseudo-Huber threshold -> dune.multilaterate
+%                (default 0.15 m; Inf = plain weighted least squares)
 %
 %   pos  [1x2] world x,y (NaN NaN if <3 usable anchors / degenerate / diverged)
-%   info dune.multilaterate info (resid, used, rmse, iters, cov) plus
+%   info dune.multilaterate info (resid, used, wRobust, rmse, iters, cov) plus
 %        per-anchor rows aligned to A.ids:
 %     .range     raw range (m), NaN if absent or rejected
 %     .rangeCorr bias-corrected range actually solved on
@@ -42,7 +43,7 @@ arguments
     opts.useGapWeights (1,1) logical = true
     opts.gapThreshDb (1,1) double = 3
     opts.gapFloorW (1,1) double = 0.05
-    opts.gateK (1,1) double = 3
+    opts.huberDelta (1,1) double = 0.15
 end
 
 SENTINEL = -2147483648;   % DW1000 diagnostic-read error (seen on A3)
@@ -100,7 +101,7 @@ end
 w = w .* wScale;
 
 [pos, info] = dune.multilaterate(A.pos, corr, weights=w, tagZ=opts.tagZ, ...
-                                 x0=opts.x0, gateK=opts.gateK);
+                                 x0=opts.x0, huberDelta=opts.huberDelta);
 info.range = range;
 info.rangeCorr = corr;
 info.rx = rx;
