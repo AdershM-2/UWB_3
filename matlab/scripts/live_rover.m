@@ -23,7 +23,7 @@ function live_rover(opts)
 %   dead-reckoned estimate away from reality.
 
 arguments
-    opts.baseline (1,1) double = 0.50     % L, antenna centre-to-centre - MEASURE
+    opts.baseline (1,1) double = 0.527    % L, antenna centre-to-centre - MEASURE
     opts.frontTag (1,1) double = 241
     opts.rearTag (1,1) double = 240
     opts.udpPort (1,1) double = 4100
@@ -32,6 +32,14 @@ arguments
     opts.powerCorr (1,1) logical = true
     opts.nlos (1,1) logical = true
     opts.coastLimit (1,1) double = 2.0    % s without any fix -> freeze display
+    opts.pin (1,1) logical = true         % freeze the DISPLAYED pose (centre AND
+                                          % yaw) while the rig is still and inside
+                                          % pinRadius. Cosmetic: the raw MHE pose
+                                          % is still what gets logged.
+    opts.pinRadius (1,1) double = 0.05    % m deadband (the breathing lives below
+                                          % ~5-7 cm - see docs/phase_a_findings.md)
+    opts.smooth (1,1) double = 0.6        % output EMA on the MOVING pose
+                                          % (0<a<1, 1 = off); yaw smoothed circularly
     opts.trail (1,1) double = 400
     opts.margin (1,1) double = 2.0
     opts.logDir string = ""
@@ -94,6 +102,8 @@ histA = nan(1,8); histG = nan(1,8); still = false;
 tPrev = NaN; tLastFix = NaN;
 nSweeps = 0; nPose = 0; tRate = [];
 pose = [NaN NaN NaN NaN];
+pinPose = [NaN NaN NaN]; pinOut = 0; pinned = false;   % output-pin state
+smoothC = [NaN NaN]; smoothPsi = NaN;                  % output EMA state
 
 while ishandle(fig)
     for e = tu.drainEvents()
@@ -140,6 +150,38 @@ while ishandle(fig)
             tRate(tRate < s.thost - 10) = [];
         end
 
+        % ---- Output pin + smoother (COSMETIC: the raw MHE pose is logged) --
+        % Parked, the true pose is constant, so sub-radius movement is the
+        % known per-anchor breathing (docs/phase_a_findings.md), not motion:
+        % freeze the DISPLAYED centre AND yaw. Moving, a light circular EMA
+        % takes the high-frequency jitter off. The estimator is untouched.
+        poseOut = pose;
+        pinned = false;
+        if all(isfinite(pose))
+            if opts.pin && still
+                if any(~isfinite(pinPose)), pinPose = pose(1:3); pinOut = 0; end
+                if norm(pose(1:2) - pinPose(1:2)) >= opts.pinRadius
+                    pinOut = pinOut + 1;
+                    if pinOut >= 8, pinPose = pose(1:3); pinOut = 0; end
+                else
+                    pinOut = 0;
+                end
+                poseOut(1:3) = pinPose; pinned = true;
+                smoothC = poseOut(1:2); smoothPsi = poseOut(3);   % reseed EMA
+            else
+                pinPose = [NaN NaN NaN]; pinOut = 0;
+                if opts.smooth < 1 && all(isfinite(smoothC)) && isfinite(smoothPsi)
+                    smoothC = opts.smooth*pose(1:2) + (1-opts.smooth)*smoothC;
+                    sv = opts.smooth*[cos(pose(3)) sin(pose(3))] + ...
+                         (1-opts.smooth)*[cos(smoothPsi) sin(smoothPsi)];
+                    smoothPsi = atan2(sv(2), sv(1));      % circular EMA for yaw
+                    poseOut(1:2) = smoothC; poseOut(3) = smoothPsi;
+                else
+                    smoothC = pose(1:2); smoothPsi = pose(3);
+                end
+            end
+        end
+
         % ---- independent baseline yaw (raw fixes), for comparison --------
         yawRaw = NaN;
         if rawFix.isKey(opts.frontTag) && rawFix.isKey(opts.rearTag)
@@ -156,6 +198,7 @@ while ishandle(fig)
             rec.psi = round(pose(3),4); rec.speed = round(pose(4),4);
         end
         rec.roll = round(rollHold,4); rec.pitch = round(pitchHold,4);
+        rec.pinned = pinned;
         if isfinite(imuYaw), rec.imuYaw = round(imuYaw,4); end
         if isfinite(yawRaw), rec.yawRaw = round(yawRaw,4); end
         fprintf(fid, '%s\n', jsonencode(rec));
@@ -176,28 +219,29 @@ while ishandle(fig)
         end
         set(ghostH, 'XData', gx, 'YData', gy);
 
-        if all(isfinite(pose)) && ~coasting
-            [pf, prr] = mr.tagPositions(pose, pitchHold);
+        if all(isfinite(poseOut)) && ~coasting
+            [pf, prr] = mr.tagPositions(poseOut, pitchHold);
             set(frontH, 'XData', pf(1), 'YData', pf(2));
             set(rearH,  'XData', prr(1), 'YData', prr(2));
             set(rigH,   'XData', [prr(1) pf(1)], 'YData', [prr(2) pf(2)]);
-            set(ctrH,   'XData', pose(1), 'YData', pose(2));
-            set(hdgH, 'XData', pose(1), 'YData', pose(2), ...
-                      'UData', 0.4*cos(pose(3)), 'VData', 0.4*sin(pose(3)));
-            trail = [trail(2:end,:); pose(1:2)];
+            set(ctrH,   'XData', poseOut(1), 'YData', poseOut(2));
+            set(hdgH, 'XData', poseOut(1), 'YData', poseOut(2), ...
+                      'UData', 0.4*cos(poseOut(3)), 'VData', 0.4*sin(poseOut(3)));
+            trail = [trail(2:end,:); poseOut(1:2)];
             set(trailH, 'XData', trail(:,1), 'YData', trail(:,2));
             xl = xlim(ax); yl = ylim(ax);
-            if pose(1) < xl(1) || pose(1) > xl(2) || pose(2) < yl(1) || pose(2) > yl(2)
-                xlim(ax, [min(xl(1), pose(1)-0.5), max(xl(2), pose(1)+0.5)]);
-                ylim(ax, [min(yl(1), pose(2)-0.5), max(yl(2), pose(2)+0.5)]);
+            if poseOut(1) < xl(1) || poseOut(1) > xl(2) || ...
+               poseOut(2) < yl(1) || poseOut(2) > yl(2)
+                xlim(ax, [min(xl(1), poseOut(1)-0.5), max(xl(2), poseOut(1)+0.5)]);
+                ylim(ax, [min(yl(1), poseOut(2)-0.5), max(yl(2), poseOut(2)+0.5)]);
             end
         end
 
         hz = NaN;
         if numel(tRate) > 1, hz = (numel(tRate)-1)/(tRate(end)-tRate(1)); end
         yawStr = '';
-        if all(isfinite(pose))
-            yawStr = sprintf('yaw %+6.1f', rad2deg(wrapToPi(pose(3))));
+        if all(isfinite(poseOut))
+            yawStr = sprintf('yaw %+6.1f', rad2deg(wrapToPi(poseOut(3))));
             if isfinite(yawRaw)
                 yawStr = sprintf('%s (raw %+6.1f)', yawStr, rad2deg(wrapToPi(yawRaw)));
             end
@@ -205,10 +249,11 @@ while ishandle(fig)
         stateStr = 'MHE';
         if coasting, stateStr = 'COASTING - display frozen'; end
         if still, stateStr = [stateStr ' STILL']; end
-        if all(isfinite(pose))
+        if pinned, stateStr = [stateStr ' PIN']; end
+        if all(isfinite(poseOut))
             ttl.String = sprintf(['rover %s  (%.2f, %.2f) m  %s deg  v %.2f m/s  ' ...
                 'roll %+.1f pitch %+.1f  %.1f Hz  %d/%d anch%s  poses %d/%d'], ...
-                stateStr, pose(1), pose(2), yawStr, pose(4), ...
+                stateStr, poseOut(1), poseOut(2), yawStr, poseOut(4), ...
                 rad2deg(rollHold), rad2deg(pitchHold), hz, ...
                 nnz(info.used), nnz(~isnan(info.range)), missStr, nPose, nSweeps);
         else

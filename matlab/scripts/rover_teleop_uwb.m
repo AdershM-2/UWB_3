@@ -48,13 +48,18 @@ UWB_ENABLE   = true;
 UWB_PORT     = 4100;      % HostLink UDP broadcast port
 UWB_FRONT_TAG = 241;      % no IMU, mounted in front
 UWB_REAR_TAG  = 240;      % BNO085, mounted behind
-UWB_BASELINE  = 0.50;     % m, antenna centre-to-centre - MEASURE and set
+UWB_BASELINE  = 0.527;    % m, antenna centre-to-centre (measured 52.7 cm)
 
-% AprilTag position relative to the UWB rig, in ROVER BODY axes (metres):
+% AprilTag centre relative to the UWB rig, in ROVER BODY axes (metres):
 %   x = forward (rear tag -> front tag), y = left.
-% [0 0] means the AprilTag sits at the midpoint of the two UWB tags. Measure
-% this and set it; it is the lever arm between truth and the MHE centre.
-APRILTAG_OFFSET_BODY = [0, 0];
+% MEASURED 2026-07-22 (user diagram + confirmation):
+%   baseline 52.7 cm  =>  half = 26.35 cm; rear tag 240 at x = -0.2635
+%   AprilTag centre is 15 cm forward of the REAR tag (240, the IMU one)
+%       ->  x = -0.2635 + 0.15 = -0.1135  (11.35 cm BEHIND the rig centre)
+%   AprilTag is 10 cm to the rover's RIGHT  ->  y = -0.10  (y is +left)
+% Used in analysis as: truth_centre = apriltag_xy - R(yaw) * offset
+% (the lever arm rotates with heading, so it must be de-rotated, not subtracted).
+APRILTAG_OFFSET_BODY = [-0.1135, -0.10];
 
 % Frame relation between the Kinect/AprilTag world and the UWB anchor world is
 % NOT assumed. Both are logged RAW; fit the 2D rigid transform offline.
