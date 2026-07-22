@@ -184,7 +184,27 @@ better ranges.
        the parked log: baseline std 36 mm → exact, centre wander −15%, yaw std 7.1→5.6°,
        range rmse 61→70 mm (expected 3-DOF cost). Rigid-body MHE (temporal, gyro→ψ,
        no-slip) NOT started.
-     - ⚠ **WHY DUAL-TAG WAS ROLLED BACK** (diagnosed, and largely already addressed):
+     - **RIGID TWO-TAG MHE ✅ BUILT 2026-07-22 (commit 4acb586)** — the current
+       dual-tag approach, replacing the rolled-back per-tag live_dual_tag:
+       `dune.MheRigid` estimates ONE body state [cx cy psi speed]; both tags are
+       derived from it (front = c + (Lh/2)[cosψ,sinψ], rear = c − …), so the rig's
+       physics are STRUCTURAL, not penalties: inter-tag distance exact, "both
+       stationary or both moving" automatic (single speed state), yaw fused from UWB
+       geometry + gyro yaw-rate (delta only — no trusted absolute heading).
+       Asynchronous: each sweep from EITHER tag is its own window node (sgn ±1), so
+       the streams need no time-pairing. Terrain: roll/pitch DIRECT from the IMU →
+       projected baseline L·cos(pitch) + per-tag height tagZ ± (L/2)·sin(pitch)
+       (roll cannot move an inline baseline — attitude only). Unicycle motion, ZUPT,
+       arrival cost, jump-guard retained. MHE only, no EKF.
+       Validated synthetically (test_mhe_rigid, real anchor layout, 30 mm range
+       noise): centre median 14 mm / p95 33 mm, yaw median 1.2°, 0 guard trips;
+       identical under ±8.6/11.5° pitch with the projected baseline exact.
+       `live_rover.m` runs both tags over ONE UDP socket (WiFi) and **fixes the old
+       display bug**: markers freeze with a COASTING warning if both tags go quiet,
+       instead of following a dead-reckoned estimate.
+       PENDING: hardware run; measure L precisely; check the gyro sign if turns lag.
+     - ⚠ **WHY THE OLD PER-TAG DUAL-TAG WAS ROLLED BACK** (diagnosed, and largely
+       already addressed — the rigid solver above supersedes it):
        1. **A1 & A2 stopped answering mid-run** → only A3/A4/A5 left, which are the three
           TOP-EDGE anchors (y≈2.1–2.3, near-collinear) → multilaterate's degenerate-geometry
           gate (sv(2)<0.3, multilaterate.m:41) correctly refused a fix. NOT a solver bug.
