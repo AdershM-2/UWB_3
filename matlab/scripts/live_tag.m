@@ -80,6 +80,11 @@ arguments
     opts.trail (1,1) double = 300
     opts.margin (1,1) double = 2.0   % plot margin around the anchors (m)
     opts.logDir string = ""
+    opts.transport string = "serial" % "serial" (COM, the `port` arg) or "udp"
+                                      % (WiFi: the tag already UDP-broadcasts; the
+                                      % `port` arg is ignored, opts.udpPort binds).
+                                      % One tag only — for two tags use live_dual.
+    opts.udpPort (1,1) double = 4100  % UDP port the firmware streams to
 end
 
 A = dune.loadAnchors();
@@ -95,18 +100,24 @@ stamp = datestr(now, 'yyyymmdd_HHMMSS'); %#ok<TNOW1,DATST>
 logFile = fullfile(opts.logDir, ['rtls_log_' stamp '.jsonl']);
 fid = fopen(logFile, 'w');
 
-%% Serial
-ts = dune.TagSerial(port);
-ts.rawLogFid = fopen(fullfile(opts.logDir, ['serial_raw_' stamp '.log']), 'w');
+%% Transport (serial COM or WiFi UDP)
+if opts.transport == "udp"
+    ts = dune.TagUdp(opts.udpPort);
+    ts.rawLogFid = fopen(fullfile(opts.logDir, ['udp_raw_' stamp '.log']), 'w');
+    srcName = sprintf('UDP:%d', opts.udpPort);
+else
+    ts = dune.TagSerial(port);
+    ts.rawLogFid = fopen(fullfile(opts.logDir, ['serial_raw_' stamp '.log']), 'w');
+    srcName = sprintf('%s @ %d baud', ts.port, ts.baud);
+end
 cleanup = onCleanup(@() endSession(ts, fid, logFile));
 ts.start();
-fprintf('Listening on %s @ %d baud (%s, host bias %s, power corr %s)\n', ...
-        ts.port, ts.baud, A.layout, string(opts.bias), ...
-        string(~isempty(RC)));
+fprintf('Listening on %s (%s, host bias %s, power corr %s)\n', ...
+        srcName, A.layout, string(opts.bias), string(~isempty(RC)));
 fprintf('Logging to %s\n', logFile);
 
 %% Figure
-fig = figure('Name', sprintf('DUNE live tag - %s', ts.port), 'NumberTitle', 'off');
+fig = figure('Name', sprintf('DUNE live tag - %s', srcName), 'NumberTitle', 'off');
 ax = axes(fig); hold(ax, 'on'); axis(ax, 'equal'); grid(ax, 'on');
 % Per-anchor markers (scatter so each can recolour by freshness: green =
 % answering, red = not seen for a while).
@@ -165,7 +176,16 @@ while ishandle(fig)
         missCount(~present) = missCount(~present) + 1;
         if ~ismember(s.tag, queried)
             queried(end+1) = s.tag; %#ok<AGROW>
-            ts.send(sprintf('GETMYDELAY,%d', s.tag));   % report NVS delay state
+            cmd = sprintf('GETMYDELAY,%d', s.tag);       % report NVS delay state
+            try
+                if isa(ts, 'dune.TagUdp')
+                    ts.sendCmd(cmd, s.tag);
+                else
+                    ts.send(cmd);
+                end
+            catch
+                % best-effort (cosmetic delay-source query); ignore failures
+            end
         end
         % Stillness detection (drives range-hold trust and EKF stillMode)
         if ~isempty(s.imu) && s.imu.status >= 1
