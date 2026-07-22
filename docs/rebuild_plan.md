@@ -1,6 +1,13 @@
 # DUNE UWB — Rebuild Plan
 
-_Last updated: 2026-07-21. Paper sidelined — focus is the working system._
+_Last updated: 2026-07-22. Paper sidelined — focus is the working system._
+
+> **PHASE CHANGE (2026-07-22): BUILDING IS DONE. From here it is TESTING & TUNING.**
+> The full chain now exists end-to-end and has run on hardware:
+> two tags → WiFi/UDP → rigid two-tag MHE → live pose, and a PS4-teleoperated rover
+> that captures UWB **and** AprilTag ground truth on one clock, plus an offline report
+> that scores UWB against truth. No major new components are planned. What remains is
+> running experiments, fixing data-quality issues, and tuning — see **7.5**.
 
 ## Goal
 _Revised 2026-07-21: accuracy target relaxed 3 → 8 cm; the primary objective is now
@@ -9,14 +16,21 @@ not chasing absolute accuracy._
 2D position RMSE ≤ 8 cm with the rover **moving** (EKF-filtered). Dual-tag yaw.
 Kinect v2 = ground truth. All host work in MATLAB. Pose output is display/logging only.
 
-## Current status (2026-07-21)
-Steps 1–5 done, 7.1–7.2 done. Live MATLAB pipeline at 5–7 Hz over COM with EKF display.
-Anchor delays calibrated on the sweep path vs Kinect truth (4 mm at the reference point);
-tag 241 own-delay tuned (one step, −507 mm → −2 mm common offset). Tier-2 power correction
-wired (floor-wide static per-sweep RMSE 199 → 94 mm). FusionEkf ported + hardened (robust
-M-estimation, stillMode, per-anchor bias states, RangeHold) — anchor-dropout jumps down to
-6–10 mm. **Remaining error: slow ~5–7 cm per-anchor "breathing" at fixed position — the
-active investigation below (expert-reviewed 2026-07-21).**
+## Current status (2026-07-22)
+Steps 1–5 done, 7.1–7.4 done. **The system is built; the phase is now testing & tuning.**
+Calibration: anchor delays tuned on the sweep path vs Kinect truth (4 mm at the reference
+point); tag 241 own-delay tuned; Tier-2 power correction wired (floor-wide static per-sweep
+RMSE 199 → 94 mm). Estimators: FusionEkf (robust M-estimation, stillMode, per-anchor bias
+states, RangeHold) AND the experimental MHE family — `dune.MheEstimator` (cv / gyro
+coordinated-turn / non-holonomic unicycle) and `dune.MheRigid` (rigid two-tag body,
+[cx cy psi speed], distance exact by construction, gyro-driven heading, terrain roll/pitch
+from the IMU). Transport: WiFi/UDP for one or both tags (`dune.TagUdp`); the old "iitk
+blocks UDP" belief was wrong. Apps: `live_tag` (single, serial or UDP), `live_rover`
+(rigid two-tag over WiFi), `rover_teleop_uwb` (PS4 drive + UWB + AprilTag truth on one
+clock), `rover_run_report` (offline scoring vs truth).
+**Known residual: slow ~5–7 cm per-anchor "breathing" at a fixed position** — characterised
+in Phase A/B as per-link RF physics (ground-grazing/LDE), masked at the output by the pin +
+EMA, not eliminated. See the PARKED section below.
 
 ## PARKED (2026-07-21): wobble root-cause investigation + broadcast-POLL
 **Decision (user, 2026-07-21):** the parked wobble is characterised well enough (Phase A/B
@@ -216,13 +230,38 @@ better ranges.
           at ~30 cm true). live_tag guards the dot on a finite raw fix; live_dual_tag
           dropped that guard. **Fix before re-enabling dual-tag:** guard the display on a
           finite raw fix + reinit the EKF after a long coast.
-   - 7.4 Kinect moving-truth recorder (AprilTag → world CSV, t_host-synced) — LATER, for
-     overall accuracy comparison of EKF vs MHE(cv/unicycle) vs rigid-body.
-   - 7.5 Moving validation: trajectories vs Kinect truth → RMSE ≤ 8 cm goal +
-     STABILITY metrics first-class (parked wander, subset-jump size, per-anchor range
-     consistency) + yaw accuracy; recalibrate ZUPT/stillness thresholds with labelled
-     motion data.
-8. **Run live** — extend live_tag to dual-tag EKF output (largely exists).
+   - 7.4 ✅ **DONE 2026-07-22 — moving truth via the ROVER, not a separate recorder.**
+     The rover already carries an AprilTag the Kinect tracks, so driving it with both UWB
+     tags aboard captures truth + UWB together. `rover_teleop_uwb.m` (commit f682864,
+     ported READ-ONLY from D:\MMS_Codebase\...\test_random_excitation_slip_measurement.m —
+     nothing in MMS modified): PS4 teleop + AprilTag truth + rover IMU/encoders + BOTH UWB
+     tags on one POSIX clock → results/rover_runs/. The MHE deliberately does NOT run in
+     the control loop (E-stop latency); it runs offline. `rover_run_report.m` (48e136b)
+     scores it: per-sweep raw fixes, rigid MHE, lever-arm de-rotation, 2D rigid frame fit
+     (Umeyama — the Kinect and UWB worlds are NOT assumed equal), RMSE + quality panels.
+     Rig geometry MEASURED: L = 0.527 m; front = 241 (no IMU), rear = 240 (IMU);
+     AprilTag centre 15 cm forward of the REAR tag and 10 cm to the rover's RIGHT →
+     APRILTAG_OFFSET_BODY = [-0.1135, -0.10].
+   - 7.5 ◀ **ACTIVE: testing & tuning** (this is the remaining work; nothing major to build).
+     FIRST RUN 2026-07-22 (rover_uwb_20260722_140022, 212 s): pipeline works end-to-end and
+     the trajectory SHAPE matches truth (frame fit −3.6°, [−0.46 −0.59] m). Numbers not yet
+     trustworthy: **RMSE 268 mm / median 98 mm**, dominated by excursions. Blockers found,
+     in priority order:
+     1. **AprilTag truth only 58% available** with a long gap after t≈85 s → the big error
+        excursions are largely unmeasured stretches. Keep the tag in the Kinect FOV.
+     2. **Rear tag 240 starved: 386 sweeps vs 1124 front.** The rigid solve pins yaw by
+        seeing BOTH ends, so heading is weakly constrained → **691/1510 MHE guard trips**.
+        Diagnose 240's UDP/ring share.
+     3. **Mean 3.6 anchors/sweep** and worst errors at x≈3 (the A2/A3 edge) — marginal
+        geometry. Drive inside the rectangle; keep all 5 anchors alive.
+     4. **Control loop 2.9 Hz** (`sens 83%`): the AprilTag retry path (3 retries × 30 ms)
+        dominates whenever detection fails, so poor visibility ALSO starves the loop.
+        Optional fix: cut AprilTag retries in the ported file (gaps interpolate fine).
+     Then: score EKF vs MHE(cv/unicycle) vs MheRigid on the same runs; stability metrics
+     first-class (parked wander, subset-jump size, per-anchor consistency) + yaw accuracy;
+     retune ZUPT/stillness thresholds on labelled motion.
+8. **Run live** — ✅ covered: live_tag (single, serial/UDP) and live_rover (rigid two-tag
+   over WiFi), both with the output pin + EMA and a coast-guarded display.
 
 ## Key notes
 - Reject `rx = -2147483648` sentinels (handled in solveSweep).
