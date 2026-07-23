@@ -118,8 +118,18 @@ if sum(good) > 20 && numel(tT) > 20
                 rad2deg(atan2(Rr(2,1),Rr(1,1))), tr);
         fprintf('  RMSE %.0f mm | median %.0f mm | p95 %.0f mm | max %.0f mm\n', ...
                 1000*rms, 1000*median(err), 1000*prctile(err,95), 1000*max(err));
+        % Same transform applied to EVERY UWB pose, not just the truth-time
+        % samples, so panel 3 can show the full-rate track. Without this the
+        % aligned panel draws only the ~1 Hz decimation and looks like a
+        % different curve from the 6 Hz track in panel 1.
+        out.PoseAligned = nan(size(src));
+        out.PoseAligned(good,:) = (Rr * src(good,:)')' + tr;
+        pathU = sum(vecnorm(diff(Ea), 2, 2));
+        pathT = sum(vecnorm(diff(cT(m,:)), 2, 2));
+        fprintf('  path length: UWB %.2f m vs truth %.2f m (%.2fx -> jitter)\n', ...
+                pathU, pathT, pathU / max(pathT, 1e-6));
         out.err = err; out.Ealigned = Ea; out.cTm = cT(m,:); out.tm = tT(m);
-        out.R = Rr; out.t = tr;
+        out.R = Rr; out.t = tr; out.pathRatio = pathU / max(pathT, 1e-6);
     end
 end
 
@@ -138,25 +148,28 @@ if any(~isnan(Pose(:,1)))
     plot(Pose(:,1), Pose(:,2), '-', 'Color',[.85 .2 .2], 'LineWidth',1.2);
 end
 title('UWB frame: raw fixes (grey) + rigid MHE (red)'); xlabel('x (m)'); ylabel('y (m)');
-axis(TRAJ_LIM);
+lockTraj(TRAJ_LIM);
 
 % 2: AprilTag truth in its own frame
 nexttile; hold on; grid on; axis equal;
 plot(cT(:,1), cT(:,2), 'b.-', 'MarkerSize',5);
 title(sprintf('AprilTag truth (Kinect frame), %d samples', size(cT,1)));
-xlabel('x (m)'); ylabel('y (m)'); axis(TRAJ_LIM);
+xlabel('x (m)'); ylabel('y (m)'); lockTraj(TRAJ_LIM);
 
 % 3: overlay after alignment
 nexttile; hold on; grid on; axis equal;
 if isfield(out,'Ealigned')
+    plot(out.PoseAligned(:,1), out.PoseAligned(:,2), '-', ...
+         'Color',[1 .65 .65], 'LineWidth',0.8);
     plot(out.cTm(:,1), out.cTm(:,2), 'b-', 'LineWidth',1.4);
     plot(out.Ealigned(:,1), out.Ealigned(:,2), 'r-', 'LineWidth',1.1);
-    legend({'truth','UWB (aligned)'}, 'Location','best');
-    title(sprintf('aligned: RMSE %.0f mm', 1000*sqrt(mean(out.err.^2))));
+    legend({'UWB full rate','truth','UWB @ truth times'}, 'Location','best');
+    title(sprintf('aligned: RMSE %.0f mm, path %.1fx truth', ...
+                  1000*sqrt(mean(out.err.^2)), out.pathRatio));
 else
     title('not enough overlap to align');
 end
-xlabel('x (m)'); ylabel('y (m)'); axis(TRAJ_LIM);
+xlabel('x (m)'); ylabel('y (m)'); lockTraj(TRAJ_LIM);
 
 % 4: commands
 nexttile; hold on; grid on;
@@ -192,6 +205,17 @@ out.figFile = f;
 end
 
 %% ── helpers ─────────────────────────────────────────────────────────────
+function lockTraj(lim)
+%LOCKTRAJ Pin equal-aspect limits so a window resize cannot re-expand them.
+%   `axis equal` on its own only fixes the data aspect ratio - the limits stay
+%   free to grow when the axes box is reshaped, which is why a resized figure
+%   showed different x-ranges per tile. Matching the plot box to the data range
+%   satisfies both constraints and holds the limits put.
+axis(lim);
+daspect([1 1 1]);
+pbaspect([diff(lim(1:2)) diff(lim(3:4)) 1]);
+end
+
 function [R, t, rms] = fitRigid2D(P, Q)
 % Least-squares 2D rigid transform (no scale) mapping P -> Q (Umeyama).
 mp = mean(P,1); mq = mean(Q,1);
