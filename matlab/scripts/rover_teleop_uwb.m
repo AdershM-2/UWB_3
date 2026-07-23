@@ -651,12 +651,27 @@ if total_samples > 0
     save(filepath, 'data', 'metadata', '-v7.3');
     fprintf('  Saved (%d rover samples, %d UWB sweeps, %.1f s)\n', ...
             total_samples, total_uwb, data.time(end));
-    fprintf('\nNext: run the estimator offline on this file and compare against\n');
-    fprintf('the AprilTag truth (frames are logged RAW - fit the 2D transform).\n');
 end
 
 delete(hw);
 fprintf('\n=== SESSION COMPLETE ===\n\n');
+
+%% ========================================
+%% OFFLINE REPORT
+%% ========================================
+% Runs the estimator over the sweeps we just logged and compares against the
+% AprilTag truth (frames are logged RAW - the report fits the 2D transform).
+% Hardware is already released above, so a failure here costs nothing.
+
+if total_samples > 0
+    fprintf('Generating run report...\n');
+    try
+        rover_run_report(filepath);
+    catch ME
+        fprintf(2, 'report failed: %s\n', ME.message);
+        fprintf(2, 'run it by hand:  rover_run_report(''%s'')\n', filepath);
+    end
+end
 
 %% ========================================
 %% HELPER FUNCTIONS (ported unchanged)

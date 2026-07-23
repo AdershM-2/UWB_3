@@ -125,24 +125,26 @@ end
 
 %% ---- plots -------------------------------------------------------------
 if ~opts.plot, return; end
+TRAJ_LIM = [-3 3 -2 2];        % common x/y limits for all trajectory panels
 fig = figure('Position',[30 30 1500 900]);
 tiledlayout(2,3,'TileSpacing','compact','Padding','compact');
 
 % 1: UWB world - anchors, raw fixes, MHE
 nexttile; hold on; grid on; axis equal;
 plot(A.pos(:,1), A.pos(:,2), 'k^','MarkerFaceColor','y','MarkerSize',9);
-text(A.pos(:,1)+0.05, A.pos(:,2), compose('A%d', A.ids));
+text(A.pos(:,1)+0.05, A.pos(:,2), compose('A%d', A.ids), 'Clipping','on');
 plot(Praw(:,1), Praw(:,2), '.', 'Color',[.75 .75 .75], 'MarkerSize',4);
 if any(~isnan(Pose(:,1)))
     plot(Pose(:,1), Pose(:,2), '-', 'Color',[.85 .2 .2], 'LineWidth',1.2);
 end
 title('UWB frame: raw fixes (grey) + rigid MHE (red)'); xlabel('x (m)'); ylabel('y (m)');
+axis(TRAJ_LIM);
 
 % 2: AprilTag truth in its own frame
 nexttile; hold on; grid on; axis equal;
 plot(cT(:,1), cT(:,2), 'b.-', 'MarkerSize',5);
 title(sprintf('AprilTag truth (Kinect frame), %d samples', size(cT,1)));
-xlabel('x (m)'); ylabel('y (m)');
+xlabel('x (m)'); ylabel('y (m)'); axis(TRAJ_LIM);
 
 % 3: overlay after alignment
 nexttile; hold on; grid on; axis equal;
@@ -154,7 +156,7 @@ if isfield(out,'Ealigned')
 else
     title('not enough overlap to align');
 end
-xlabel('x (m)'); ylabel('y (m)');
+xlabel('x (m)'); ylabel('y (m)'); axis(TRAJ_LIM);
 
 % 4: commands
 nexttile; hold on; grid on;
