@@ -72,11 +72,26 @@ V_MAX = 0.10;              % m/s
 OMEGA_MAX = 0.107;         % rad/s
 
 % --- Timing ---
-CONTROL_RATE = 20;         % Hz
+CONTROL_RATE = 20;         % Hz, PS4 input polling target
 STATUS_PRINT_INTERVAL = 1;
 DISPLAY_UPDATE_INTERVAL = 0.5;
-MAX_RETRIES = 3;
+MAX_RETRIES = 3;           % IMU / encoder read retries (cheap serial)
 RETRY_DELAY = 0.03;
+
+% --- Loop scheduling (responsiveness fix, 2026-07-22) ---
+% The heavy work (AprilTag detect ~150-280 ms, five serial commands per
+% velocity send) used to run EVERY iteration, dragging the loop to ~3 Hz -
+% at which point a quick button tap falls entirely between two polls and is
+% never seen. Now the PS4 is polled fast and the heavy work is scheduled:
+SENSOR_PERIOD    = 0.35;   % s between sensor-log samples (~3 Hz, what the
+                           %   hardware achieves anyway - unchanged data rate)
+APRILTAG_RETRIES = 1;      % was 3: a missed detection cost 500-900 ms in
+                           %   retries; offline analysis interpolates gaps fine
+VEL_KEEPALIVE    = 1.0;    % s: velocity is sent ON CHANGE + this keepalive
+                           %   (motors latch their last command - the original
+                           %   already relied on that while idle)
+UWB_DRAIN_PERIOD = 0.15;   % s between UDP drains (an EMPTY Java poll costs
+                           %   ~15 ms; packets buffer in the OS meanwhile)
 
 % --- Rover physical parameters ---
 WHEEL_RADIUS = 0.07;
@@ -308,6 +323,11 @@ nUwbTag = containers.Map({UWB_FRONT_TAG, UWB_REAR_TAG}, {0, 0});
 lastUwbT = NaN;
 tSensors = 0; tUwb = 0;          % cumulative section timing (loop-rate diag)
 lastRateT = 0; lastRateN = 0; loopHz = NaN;
+inputN = 0; lastInputN = 0; inputHz = NaN;   % PS4 polling rate (the one that matters)
+lastSensorT = -inf;              % when the heavy sensor block last ran
+lastUwbDrainT = -inf;            % when the UDP socket was last drained
+lastVelSent = [NaN NaN];         % last (V,omega) actually transmitted
+lastVelT = -inf;                 % ... and when (for the keepalive)
 
 test_start_time = tic;
 test_start_posix = posixtime(datetime('now', 'TimeZone', 'UTC'));
@@ -397,26 +417,48 @@ try
         V_cmd = currentV;
         if reverseMode, V_cmd = -V_cmd; end
         omega_cmd = currentOmega;
+        inputN = inputN + 1;
 
+        %% --- Send velocity ON CHANGE (+ keepalive), not every iteration ---
+        % setRoverVelocity costs ~5 serial round-trips (~100-150 ms). The
+        % motors latch their last command (the original relied on this while
+        % idle), so re-sending an unchanged command every loop only burned
+        % time. Changes go out immediately; a 1 s keepalive re-asserts.
+        velChanged = ~isequal([V_cmd, omega_cmd], lastVelSent);
         if abs(V_cmd) > 0.001 || abs(omega_cmd) > 0.001
-            hw.setRoverVelocity(V_cmd, omega_cmd);
+            if velChanged || toc(test_start_time) - lastVelT > VEL_KEEPALIVE
+                hw.setRoverVelocity(V_cmd, omega_cmd);
+                lastVelSent = [V_cmd, omega_cmd];
+                lastVelT = toc(test_start_time);
+            end
         else
-            if mod(loop_count, 20) == 0, hw.stopAll(); end
+            if velChanged || toc(test_start_time) - lastVelT > VEL_KEEPALIVE
+                hw.stopAll();
+                lastVelSent = [V_cmd, omega_cmd];
+                lastVelT = toc(test_start_time);
+            end
         end
 
-        %% --- Log rover data ---
-        if sample_idx <= MAX_SAMPLES
+        %% --- Log rover data on ITS OWN schedule (~3 Hz), not per-iteration ---
+        % The AprilTag detect alone is 150-280 ms; running it every loop is
+        % what made button presses vanish. The logged data rate is unchanged
+        % (the hardware never delivered more than ~3 Hz anyway).
+        if sample_idx <= MAX_SAMPLES && ...
+                current_time - lastSensorT >= SENSOR_PERIOD
+            lastSensorT = current_time;
             % fast absolute clock: start + elapsed. posixtime(datetime(...,TZ))
             % costs ~0.6 ms per call, which is dead weight in a 20 Hz loop.
             data.t_posix(sample_idx) = test_start_posix + current_time;
             tS = tic;
             [data, sample_idx] = logDataPointHW(hw, data, sample_idx, current_time, ...
-                segment, V_cmd, omega_cmd, GEAR_RATIO, MAX_RETRIES, RETRY_DELAY);
+                segment, V_cmd, omega_cmd, GEAR_RATIO, ...
+                APRILTAG_RETRIES, MAX_RETRIES, RETRY_DELAY);
             tSensors = tSensors + toc(tS);
         end
 
-        %% --- Drain UWB (cheap: no solving, no MHE - see header note) ---
-        if UWB_ENABLE
+        %% --- Drain UWB on a timer (an EMPTY Java poll costs ~15 ms) ---
+        if UWB_ENABLE && current_time - lastUwbDrainT >= UWB_DRAIN_PERIOD
+            lastUwbDrainT = current_time;
             tU = tic;
             for c = tu.drain()
                 s = c{1};
@@ -491,21 +533,26 @@ try
         %% --- Console status print ---
         if toc(last_status_print) >= STATUS_PRINT_INTERVAL
             rev_tag = ''; if reverseMode, rev_tag = ' [REV]'; end
-            % Achieved loop rate + where the time goes. This MATTERS: PS4
-            % presses are caught by rising-edge detection between polls, so a
-            % loop much below ~10 Hz silently drops button presses.
+            % Achieved rates. inputHz is the one that matters for feel: PS4
+            % presses are edge-detected between polls, so input polling much
+            % below ~10 Hz silently drops button taps. sensor rate is the
+            % logging schedule (~1/SENSOR_PERIOD by design).
             dN = (sample_idx - 1) - lastRateN;
             dT = current_time - lastRateT;
-            if dT > 0, loopHz = dN / dT; end
-            lastRateN = sample_idx - 1; lastRateT = current_time;
-            warnStr = '';
-            if isfinite(loopHz) && loopHz < 8
-                warnStr = '  <-- SLOW LOOP: PS4 presses will be missed';
+            if dT > 0
+                loopHz = dN / dT;
+                inputHz = (inputN - lastInputN) / dT;
             end
-            fprintf('[%5.1fs] V=%+.3f omega=%+.3f seg=%d n=%d uwb=%d %.1fHz (sens %.0f%% uwb %.0f%%)%s%s\n', ...
+            lastRateN = sample_idx - 1; lastRateT = current_time;
+            lastInputN = inputN;
+            warnStr = '';
+            if isfinite(inputHz) && inputHz < 8
+                warnStr = '  <-- SLOW INPUT: PS4 presses will be missed';
+            end
+            fprintf('[%5.1fs] V=%+.3f omega=%+.3f seg=%d n=%d uwb=%d input %.1fHz sens %.1fHz (%.0f%%)%s%s\n', ...
                 current_time, V_cmd, omega_cmd, segment, sample_idx - 1, ...
-                uwb_idx - 1, loopHz, 100*tSensors/max(current_time,1e-3), ...
-                100*tUwb/max(current_time,1e-3), rev_tag, warnStr);
+                uwb_idx - 1, inputHz, loopHz, ...
+                100*tSensors/max(current_time,1e-3), rev_tag, warnStr);
             last_status_print = tic;
         end
 
@@ -616,13 +663,17 @@ fprintf('\n=== SESSION COMPLETE ===\n\n');
 %% ========================================
 
 function [data, idx] = logDataPointHW(hw, data, idx, time, seg_id, V_cmd, omega_cmd, ...
-                                       gear_ratio, max_retries, retry_delay)
+                                       gear_ratio, apriltag_retries, max_retries, retry_delay)
     data.time(idx) = time;
     data.segment_id(idx) = seg_id;
     data.V_cmd(idx) = V_cmd;
     data.omega_cmd(idx) = omega_cmd;
 
-    for retry = 1:max_retries
+    % AprilTag: its OWN retry budget (default 1). Each attempt is a full
+    % frame grab + detection (~150-280 ms), so the old 3-retry policy cost
+    % 500-900 ms whenever the marker was out of view. Missed samples are
+    % interpolated offline; a stalled control loop is not recoverable.
+    for retry = 1:apriltag_retries
         try
             [roverPos, roverOri] = hw.getRoverPose();
             if ~isempty(roverPos)
@@ -631,7 +682,7 @@ function [data, idx] = logDataPointHW(hw, data, idx, time, seg_id, V_cmd, omega_
                 break;
             end
         catch
-            if retry < max_retries, pause(retry_delay); end
+            if retry < apriltag_retries, pause(retry_delay); end
         end
     end
 
