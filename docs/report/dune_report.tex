@@ -463,6 +463,59 @@ Every consumer now rejects sentinel-bearing measurements explicitly
 (see \code{SENTINEL} in \gh{matlab/+dune/solveSweep.m}{solveSweep.m}).
 \end{pitfall}
 
+\subsection{Sharing the air between two tags: two modes}
+\label{sec:coord}
+
+Only one radio may transmit at a time, or the exchanges collide. With two tags on
+the rover this needs a referee, and the system supports \textbf{two modes}, chosen
+at firmware-build time. They differ only in \emph{how the two tags agree whose turn
+it is}; everything downstream (the host line format, the solver, the rigid
+estimator) is identical.
+
+\textbf{Mode A --- wireless token ring} (default,
+\gh{libraries/UwbRtls/src/TagRing.cpp}{TagRing.cpp}). The two tags pass a ``token''
+to each other \emph{over the UWB air itself}: whoever holds it sweeps, then hands it
+on. No wires. The cost is that the hand-off rides the same lossy shared channel it
+is trying to coordinate --- a dropped token frame means a missed turn, and in
+practice one tag can end up starved of slots (the first rover run captured 1124
+sweeps from the front tag but only 386 from the rear, which weakened the heading).
+
+\textbf{Mode B --- wired master/slave} (\code{UWB\_COORD\_WIRE};
+\gh{libraries/UwbRtls/src/TagLink.cpp}{TagLink.cpp}). Because the two tags are
+bolted 52.7\,cm apart on the same rigid plate, a short cable between them is trivial
+--- so coordination is moved \emph{off} the radio and onto a dedicated wire. One
+board is the \textbf{master} (the one with the IMU and WiFi); it runs the schedule
+and grants the other board --- the \textbf{slave} --- a slot over the wire. Exactly
+one DW1000 is ever active, and whose turn it is is decided by cable, never by a radio
+message that can be lost.
+
+\begin{plainwords}
+The token ring is like two people in a dark room taking turns to shout, agreeing
+whose turn it is \emph{by shouting} --- which fails exactly when the room is noisy.
+The wired link is a tap on the shoulder instead: it never gets drowned out. Since the
+two tags are rigidly a half-metre apart anyway, running a wire between them costs
+almost nothing and removes the coordination traffic from the channel entirely.
+\end{plainwords}
+
+The wire runs a UART at 921\,600\,baud with a compact binary protocol: each frame
+carries a start byte, a \emph{protocol version} (so mismatched firmware is rejected
+at the parser, not silently believed), a type, a length, and a CRC-16 check. The
+scheduler is keyed on a cycle number that every message carries, and link-health
+counters (CRC errors, resyncs, sequence gaps) make a bad cable visible immediately.
+A nice efficiency falls out of the design: while the slave uses its slot, the master
+is not idle waiting --- it spends that time on its own IMU read, host send and
+display, so the slave's sweep overlaps the master's housekeeping rather than adding
+to the cycle.
+
+When the master forwards the slave's measurement to the host it appends a small tail
+(\code{,CYC,<cycle>[,MRX,<us>]}) recording the cycle id and the master's own receive
+timestamp, so the host can line the two tags' streams up exactly;
+\gh{matlab/+dune/parseRtlsLine.m}{parseRtlsLine.m} reads it. The rigid estimator
+does not care which mode produced the data --- it already treats each incoming sweep
+independently (\S\ref{sec:rigid}) --- so the wired link is a drop-in reliability
+upgrade for the two-tag case, aimed squarely at the slot-starvation that hurt the
+first run.
+
 \section{Calibrating the radios}
 \label{sec:calibration}
 
@@ -547,6 +600,82 @@ correction did more than any other single change in the project.
 
 We also tried a neural network and a physics-informed network for this correction.
 Both lost to the straight line --- see \S\ref{sec:fail-ml}.
+
+\section{Anchor geometry without the camera: the RF self-survey}
+\label{sec:survey}
+
+Everything so far assumed the anchor positions are known --- and until now they came
+from the ceiling camera (clicked in, \S\ref{sec:registration}). That is accurate, but
+it ties the whole system to a calibrated overhead camera. The self-survey is a
+separate feature that answers a different question: \emph{can the anchors work out
+their own layout, using only their radios?}
+
+\subsection{The idea}
+
+The anchors can range to \emph{each other}. Ask every pair to do a two-way exchange
+and you get the ten pairwise distances of a five-anchor set. A set of pairwise
+distances defines a shape --- this is the same fact that lets you reconstruct a map
+from a table of city-to-city distances. The mathematical tool is \textbf{classical
+multidimensional scaling} (MDS): it turns a distance table into a set of points whose
+mutual distances match. No camera is involved at any step.
+
+\begin{plainwords}
+Give someone only the distances between five towns and they can redraw the map ---
+its shape, orientation and even its mirror-image are free, but the shape is fixed.
+The anchors do exactly this for themselves: each measures how far it is from the
+others, and the constellation's shape falls out of those numbers alone. The camera
+was never in the room.
+\end{plainwords}
+
+A tag triggers the survey with a single command; each anchor pair ranges over the air
+and the averaged distance is streamed to the host. Crucially the \emph{tag's} own
+antenna delay never enters --- it is only the messenger --- so the survey is a clean
+look at the anchor constellation. The pieces are
+\gh{matlab/scripts/survey\_capture.m}{survey\_capture.m} (trigger and record),
+\gh{matlab/scripts/survey\_reconstruct.m}{survey\_reconstruct.m} (MDS and comparison)
+and \gh{matlab/scripts/build\_survey\_anchors.m}{build\_survey\_anchors.m} (write an
+\code{anchors.json} straight from the survey, camera-free).
+
+\subsection{What it measured}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.66\textwidth]{figures/self_survey_compare.png}
+\caption{Self-survey vs the clicked-Kinect layout. Black squares: the camera's
+anchors. Red circles: the survey shape (after a rotation/reflection alignment, since
+distances fix no absolute pose). Green crosses: the same after removing each anchor's
+antenna-delay bias.}
+\label{fig:survey}
+\end{figure}
+
+The raw anchor-to-anchor distances read \textbf{long}, by up to 202\,mm (RMS 118\,mm
+over the ten pairs), because the anchors' own antenna delays inflate every
+measurement --- the exact effect calibrated away in \S\ref{sec:delay}, here seen from
+the other side. Reconstructed into a shape and aligned to the camera layout
+(rotation and reflection only --- \emph{no scaling}, deliberately, so a global size
+error cannot be absorbed), the constellation agrees well: the raw shape lands on the
+clicked geometry almost exactly, and after removing a per-anchor delay bias the
+residual is \textbf{51\,mm} (Fig.~\ref{fig:survey}).
+
+\begin{result}
+The five anchors, using only their own radios, reproduce the camera-measured layout
+to within a few centimetres of shape --- and the switch is real: the working
+\code{anchors.json} is now built from a self-survey
+(layout \code{self\_survey\_...}), not from camera clicks.
+\end{result}
+
+\subsection{What it can and cannot prove}
+
+One honest limit, stated because it is easy to oversell. The survey measures
+distances that are all biased long by unknown per-anchor delays, and there are five
+such unknowns. Those five offsets can partly mimic a genuine change in geometry, so a
+\emph{small} residual proves the layout is consistent only \emph{up to} five free
+offsets --- necessary, but not sufficient, to declare the geometry perfect. A
+\emph{large} residual, by contrast, is unambiguous: it is a real shape disagreement
+and would indict the clicked layout. So the self-survey is best read as a powerful
+\emph{cross-check} on the camera (and a camera-free fallback when no calibrated
+overhead view exists), rather than a strictly better replacement for it. That the two
+independent methods agree to centimetres is the reassuring result.
 
 \section{Getting the data to MATLAB}
 \label{sec:transport}
@@ -1083,6 +1212,18 @@ on a pitched slope the horizontal tag separation shrinks to $L\cos\theta$ and th
 two antennas sit at heights $z_0 \pm \tfrac{L}{2}\sin\theta$ --- both effects are
 in the measurement model.
 
+Two parameters keep the body speed physical (\code{speedMax},
+\code{allowReverse}). Without a bound the optimiser can explain one noisy sweep with
+an unphysical speed spike that unwinds on the next solve --- a jitter source seen as
+a non-zero fused speed while the rig is parked --- so the speed is bounded to a small
+margin above the commanded maximum. The reverse option matters more subtly: the
+unicycle description is sign-ambiguous, since speed $+v$ at heading $\psi$ and speed
+$-v$ at heading $\psi+180^\circ$ are the same motion. Near standstill the gyro barely
+breaks that tie, so the estimate can flip between the two (heading snaps
+$180^\circ$, speed flickers sign). Forbidding reverse removes one whole branch and
+kills the flip; it is opt-in, enabled only when the vehicle genuinely never backs up
+(the model itself defaults to the general symmetric bound).
+
 How good can the heading be? With per-distance noise $\sigma_d$ and baseline $L$,
 the geometric limit per reading is roughly
 \begin{equation}
@@ -1448,8 +1589,18 @@ delays against clicked truth.\\
 \gh{matlab/scripts/tune\_tag\_delay.m}{tune\_tag\_delay.m} & A tag's own delay.\\
 \gh{matlab/scripts/anchor\_delay\_tool.m}{anchor\_delay\_tool.m} & Read/set/reset
 NVS delays over the air.\\
+\gh{matlab/scripts/restore\_anchor\_delays.m}{restore\_anchor\_delays.m} & Push
+saved delays back to NVS to undo a bad calibration.\\
 \gh{matlab/scripts/static\_accuracy.m}{static\_accuracy.m} & Multi-spot campaign
 harness.\\
+\midrule
+\textbf{Anchor self-survey} (\S\ref{sec:survey}) & \\
+\gh{matlab/scripts/survey\_capture.m}{survey\_capture.m} & Trigger the RF
+self-survey; record anchor-to-anchor ranges.\\
+\gh{matlab/scripts/survey\_reconstruct.m}{survey\_reconstruct.m} & MDS
+reconstruction; compare shape to the clicked layout.\\
+\gh{matlab/scripts/build\_survey\_anchors.m}{build\_survey\_anchors.m} & Write a
+camera-free \code{anchors.json} from a survey.\\
 \midrule
 \textbf{Analysis / replay} & \\
 \gh{matlab/scripts/replay\_rtls.m}{replay\_rtls.m} & Re-run the exact live chain
@@ -1494,6 +1645,9 @@ actually report?\\
 \code{horizon} & 10--12 & MHE window length (sweeps).\\
 \code{huberDelta} & 0.15\,m & Where the robust loss switches to linear.\\
 \code{maxJump} & 0.20\,m & MHE jump-guard threshold.\\
+\code{speedMax} & 0.15\,m/s & Rigid MHE body-speed bound; stops parked speed jitter.\\
+\code{allowReverse} & true & Rigid MHE: false = forward-only, kills the standstill
+heading flip (\S\ref{sec:rigid}).\\
 \code{baseline} & 0.527\,m & Tag separation --- exact in the rigid model; re-measure
 if the plate changes.\\
 \code{gapThreshDb} & 3\,dB & NLOS weight knee (rx$-$fp gap).\\
