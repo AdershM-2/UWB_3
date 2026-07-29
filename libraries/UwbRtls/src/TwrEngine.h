@@ -24,6 +24,11 @@
 
 enum TwrRole : uint8_t { TWR_TAG, TWR_ANCHOR };
 
+enum RadioState : uint8_t {
+  RADIO_ACTIVE,    // receiver armed (permanent RX)
+  RADIO_IDLE,      // TRXOFF — transceiver off, chip clocked (fast resume)
+};
+
 class TwrEngine {
 public:
   // Configure the radio and this device's identity. antennaDelay is the
@@ -78,6 +83,14 @@ public:
   // WAITING tag observe broadcast tokens/announces (and overheard frames) to
   // run the ring. Outputs frame type, source addr, and payload[0] (0 if none).
   bool pollFrame(uint8_t& type, uint8_t& src, uint8_t& payload0);
+
+  // ---- TAG role: wired master/slave TDMA (driven by TagLink) --------------
+  // RADIO_IDLE turns the transceiver off (TRXOFF) so this tag neither hears
+  // nor disturbs the other tag's slot; RADIO_ACTIVE re-arms permanent receive.
+  // Idempotent, and every internal re-arm inside startRx() keeps the tracked
+  // state coherent, so a rangeTo() failure path cannot desynchronise it.
+  void setRadioState(RadioState state);
+  RadioState radioState() const { return _radioState; }
 
   // ---- ANCHOR role --------------------------------------------------------
   // Non-blocking: handle any pending POLL / RANGE and reply. Call from loop().
@@ -139,6 +152,8 @@ private:
   int32_t _carrierInt = 0;     // carrier integrator from last rangeTo() (raw)
 
   bool    _antDelayUpdated = false;  // set when MSG_ANT_DELAY applied; cleared by antDelayWasUpdated()
+
+  RadioState _radioState = RADIO_ACTIVE;    // begin() ends with RX armed
 
   // TAG watchdog: consecutive failures → full radio reset.
   static constexpr uint8_t FAIL_STREAK_RESET = 5;

@@ -31,6 +31,7 @@
 
 #include <Arduino.h>
 #include <math.h>
+#include <stdarg.h>
 #include "UwbScheduler.h"
 #include "SensorImu.h"
 
@@ -94,12 +95,19 @@ public:
   // Send a pre-formatted line as-is (survey control lines, diagnostics, etc.).
   // Caller must include the trailing '\n'.
   void sendRaw(const char* line) {
-    size_t len = strlen(line);
+    sendLine(line, (int)strlen(line));
+  }
+
+  // Send one pre-built line as ONE datagram (the host reader treats each
+  // datagram as a single line), mirrored to serial. Used by the master to
+  // forward the slave's formatted sweep separately from its own.
+  void sendLine(const char* line, int len) {
+    if (len <= 0) return;
 #if defined(UWB_HOSTLINK_UDP)
     checkWifi();
     if (WiFi.status() == WL_CONNECTED) {
       _udp.beginPacket(_host, _port);
-      _udp.write(reinterpret_cast<const uint8_t*>(line), len);
+      _udp.write(reinterpret_cast<const uint8_t*>(line), (size_t)len);
       _udp.endPacket();
     }
 #endif
@@ -135,22 +143,25 @@ public:
 #endif
   }
 
-private:
-  // Build the line into buf; returns number of bytes written (incl. '\n').
+  // Build an RTLS,v4 line from a raw results array; returns bytes written
+  // (incl. '\n') or -1. THE single binary->ASCII serializer: the master uses it
+  // both for its own sweep and for the slave's TagLink DATA records, so the two
+  // tags' lines can never drift apart in format. Only valid entries are
+  // emitted; tMs is the OWNING tag's clock (never rewrite a forwarded one).
   static int format(char* buf, size_t size, uint32_t tMs, uint8_t tagId,
-                    const UwbScheduler& sched, const ImuSample* imu,
-                    float dieTempC, float vbatV) {
-    // Count valid measurements first.
+                    const RangeResult* results, uint8_t n,
+                    const ImuSample* imu = nullptr,
+                    float dieTempC = NAN, float vbatV = NAN) {
     uint8_t nValid = 0;
-    for (uint8_t i = 0; i < sched.anchorCount(); i++)
-      if (sched.result(i).valid) nValid++;
+    for (uint8_t i = 0; i < n; i++)
+      if (results[i].valid) nValid++;
 
     int p = snprintf(buf, size, "RTLS,v4,%lu,%u,%u",
                      (unsigned long)tMs, (unsigned)tagId, (unsigned)nValid);
     if (p < 0 || (size_t)p >= size) return -1;
 
-    for (uint8_t i = 0; i < sched.anchorCount(); i++) {
-      const RangeResult& r = sched.result(i);
+    for (uint8_t i = 0; i < n; i++) {
+      const RangeResult& r = results[i];
       if (!r.valid) continue;
       long  mm = lround(r.distance * 1000.0f);
       int   q  = (int)lround(r.rxPower);
@@ -183,6 +194,32 @@ private:
     return p;
   }
 
+  // Scheduler-based overload (a tag's own sweep) delegating to the array one.
+  static int format(char* buf, size_t size, uint32_t tMs, uint8_t tagId,
+                    const UwbScheduler& sched, const ImuSample* imu = nullptr,
+                    float dieTempC = NAN, float vbatV = NAN) {
+    RangeResult results[UWB_MAX_ANCHORS];
+    uint8_t n = sched.anchorCount();
+    if (n > UWB_MAX_ANCHORS) n = UWB_MAX_ANCHORS;
+    for (uint8_t i = 0; i < n; i++) results[i] = sched.result(i);
+    return format(buf, size, tMs, tagId, results, n, imu, dieTempC, vbatV);
+  }
+
+  // Insert a printf-style tail BEFORE the trailing '\n' of a formatted line
+  // (e.g. ",CYC,%u" or ",CYC,%u,MRX,%llu"). Returns the new length, or the
+  // old length unchanged if it would not fit.
+  static int appendTail(char* buf, size_t size, int len, const char* fmt, ...) {
+    if (len <= 0 || buf[len - 1] != '\n') return len;
+    va_list ap;
+    va_start(ap, fmt);
+    int w = vsnprintf(buf + len - 1, size - (size_t)len, fmt, ap);
+    va_end(ap);
+    if (w < 0 || (size_t)(len - 1 + w + 1) >= size) { buf[len - 1] = '\n'; return len; }
+    buf[len - 1 + w] = '\n';
+    return len + w;
+  }
+
+private:
 #if defined(UWB_HOSTLINK_UDP)
   WiFiUDP      _udp;
   IPAddress    _host;

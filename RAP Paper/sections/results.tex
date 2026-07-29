@@ -1,0 +1,152 @@
+\section{Experimental Results}
+\label{sec:results}
+
+The system was evaluated in a sand-filled arena with five DW1000
+anchors---four at ground level near the corners and one elevated---whose
+coordinates were fixed either by the self-survey of
+Section~\ref{sec:method} or by an overhead camera. The rover carried a
+front and a rear tag separated by $L=\SI{0.527}{\meter}$, the rear tag
+additionally equipped with a BNO085 IMU, together with an AprilTag
+fiducial facing the ceiling. A ceiling-mounted Kinect~v2 tracked the
+fiducial for ground truth; after intrinsic calibration and clicked-point
+registration to the anchor frame the registration residual was
+\SI{13.5}{\milli\meter}, and the marker lever arm was compensated per
+sample. All estimation was performed off-board.
+
+\subsection{Static accuracy and calibration}
+Localization accuracy was first characterized with the rover stationary
+at 19 surveyed positions across the arena ($\sim\!\SI{20}{\second}$ per
+position, $\sim\!7\,600$ ranges). Table~\ref{tab:static} reports the
+single-reading horizontal error under the two calibration stages.
+Antenna-delay calibration alone leaves a floor-wide RMSE of
+\SI{199}{\milli\meter}; adding the received-power correction
+of~\eqref{eq:power} reduces it to \SI{94}{\milli\meter}
+(Fig.~\ref{fig:calib}), the single largest improvement in the pipeline.
+
+To quantify how much of the remaining error is irreducible by any static
+correction, we evaluated an oracle that subtracts, from each position,
+the mean residual measured there---the best achievable by any
+time-invariant, position-dependent correction. Its residual RMSE is
+\SI{72}{\milli\meter}, which therefore lower-bounds any fixed calibration
+and shows that the leftover error is not a static spatial map that a
+denser survey could remove. Temporal filtering nonetheless attains
+\SI{60}{}--\SI{65}{\milli\meter} at rest, below this bound, because it
+averages the zero-mean high-frequency component of the residual over
+successive readings, leaving only a slowly varying multipath term that
+the static oracle cannot capture.
+
+\begin{table}[t]
+  \centering
+  \caption{Static single-reading horizontal error over 19 positions.}
+  \label{tab:static}
+  \begin{tabular}{@{}lccc@{}}
+    \toprule
+     & \textbf{RMSE} & \textbf{Median} & \textbf{95th pct.}\\
+    \midrule
+    Antenna-delay calibration only          & 199 & 132 & 393\\
+    \;+ received-power correction            & \textbf{94} & \textbf{69} & 160\\
+    Oracle (per-position constant)           & 72  & 31  & ---\\
+    \bottomrule
+  \end{tabular}\\[2pt]
+  {\footnotesize All values in \si{\milli\meter}.}
+\end{table}
+
+\begin{figure}[t]
+  \centering
+  \begin{tikzpicture}
+    \begin{axis}[
+      width=0.98\columnwidth, height=4.5cm,
+      ybar, bar width=17pt,
+      ymin=0, ymax=225, xmin=0.45, xmax=2.55,
+      ylabel={Single-reading 2-D RMSE (\si{\milli\meter})},
+      ylabel style={font=\small},
+      xtick={1,2},
+      xticklabels={{Antenna\\delay only}, {+\,Power-bias\\correction}},
+      xtick style={draw=none},
+      x tick label style={font=\small, align=center},
+      ytick={0,50,...,200}, tick label style={font=\footnotesize},
+      ymajorgrids, grid style={cGrayL}, axis lines=left,
+      nodes near coords, nodes near coords style={font=\small\bfseries},
+      every node near coord/.append style={/pgf/number format/precision=0,
+        /pgf/number format/fixed},
+    ]
+      \addplot[draw=cAmber!70!black, fill=cAmberL] coordinates {(1,199) (2,94)};
+      \draw[dashed, cRed, line width=0.9pt] (axis cs:0.55,72) -- (axis cs:2.45,72);
+      \node[font=\footnotesize, text=cRed, anchor=south] at (axis cs:1.5,74)
+        {oracle floor \SI{72}{\milli\meter}};
+    \end{axis}
+  \end{tikzpicture}
+  \caption{Effect of the two-step calibration on floor-wide single-reading
+  error. The received-power correction removes the strength-dependent
+  residual left by antenna-delay calibration; the dashed line marks the
+  \SI{72}{\milli\meter} oracle floor of any fixed correction.}
+  \label{fig:calib}
+\end{figure}
+
+\subsection{Estimator comparison and anchor self-survey}
+Table~\ref{tab:est} compares the moving-horizon estimator with an
+extended Kalman filter on identical recorded ranges. While the vehicle is
+moving, the MHE reduces trajectory jerk by \SI{40}{}--\SI{44}{\percent}
+(from 0.61 to \SI{0.36}{\meter\per\second\cubed}) for only
+\SI{6}{\milli\meter} of additional lag, and the two estimators are
+equivalent at rest; each MHE solve completes in \SI{3}{\milli\second},
+within the \SI{6}{\hertz} update budget. The reduced jerk reflects the
+window optimization rejecting isolated range excursions that a
+single-step filter propagates.
+
+The anchor self-survey was evaluated against the independently registered
+overhead-camera layout (Table~\ref{tab:survey}). The raw inter-anchor
+ranges are biased long by up to \SI{202}{\milli\meter}
+(RMS \SI{118}{\milli\meter}) because each measurement carries the antenna
+delays of both participating anchors. After multidimensional scaling and
+alignment without scaling, the reconstructed constellation agrees with
+the camera layout to \SI{51}{\milli\meter} RMS once the per-anchor delay
+bias is removed---an independent confirmation of the geometry to within
+centimetres. The deployed configuration is built from this self-survey.
+
+\begin{table}[t]
+  \centering
+  \caption{Moving-horizon estimator versus Kalman filter (same logs).}
+  \label{tab:est}
+  \begin{tabular}{@{}lcc@{}}
+    \toprule
+    \textbf{Metric} & \textbf{Kalman (EKF)} & \textbf{MHE}\\
+    \midrule
+    Trajectory jerk, moving (\si{\meter\per\second\cubed}) & 0.61 & \textbf{0.36}\\
+    Additional lag (\si{\milli\meter})       & ---  & 6\\
+    RMSE at rest (\si{\milli\meter})         & 64   & \textbf{61}\\
+    Solve time (\si{\milli\second})          & $<1$ & 3\\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\begin{table}[t]
+  \centering
+  \caption{Anchor self-survey versus overhead-camera layout.}
+  \label{tab:survey}
+  \begin{tabular}{@{}lc@{}}
+    \toprule
+    \textbf{Quantity} & \textbf{Value (\si{\milli\meter})}\\
+    \midrule
+    Raw inter-anchor range bias (max)          & 202\\
+    Raw inter-anchor range bias (RMS)          & 118\\
+    Reconstructed geometry vs.\ camera (RMS)   & \textbf{51}\\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\subsection{Trajectory tracking}
+The full system was finally evaluated on a driven run under continuous
+optical ground truth. Over the trajectory the Kinect provided 133 valid
+pose samples at near-continuous coverage, and both
+tags were serviced evenly (355 and 362 sweeps) with an average of five
+anchors per sweep, so the ground truth constrains the entire path rather
+than isolated segments. The rigid-body MHE track follows the reference
+with a horizontal RMSE of \SI{124}{\milli\meter}; the estimated path
+length is $1.4\times$ that of the truth, indicating that the residual is
+dominated by high-frequency wander rather than a systematic offset, as
+the two trajectories share the same overall shape. This moving accuracy
+is consistent with the single-reading static scatter accumulating under
+motion, and is limited by per-sweep range noise, which longer averaging
+windows trade against lag; reducing it further through tighter range
+gating and higher sweep rates is the subject of ongoing work.

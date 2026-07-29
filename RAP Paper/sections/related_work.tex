@@ -1,0 +1,30 @@
+\section{Related Work}
+\label{sec:related}
+
+\subsection{UWB positioning and NLOS mitigation}
+UWB indoor positioning has been studied extensively; a comprehensive
+survey is given in~\cite{alarifi2016uwb}. Fully open systems remain
+comparatively rare: ATLAS provides an open time-difference-of-arrival
+localizer~\cite{tiemann2017atlas}, and the UTIL dataset~\cite{zhao2024util}
+releases labelled ranging logs for benchmarking. A dominant error source
+in cluttered environments is non-line-of-sight propagation, in which an
+obstructed direct path forces the signal along a longer route and biases
+the range positively. Kolakowski and Modelski~\cite{kolakowski2017nlos}
+mitigate this by classifying each link as line-of-sight or NLOS from the
+DW1000 first-path power and feeding the decision to an extended Kalman
+filter. Rather than a hard classification, we derive a continuous weight
+from the first-path-to-total power ratio measured within the same range
+report, which both attenuates suspect ranges in the position solve and
+inflates their variance in the temporal filter.
+
+\subsection{Anchor self-calibration}
+The anchor coordinates required by any multilateration system are
+conventionally measured by hand or with external instrumentation.
+Self-calibration methods that instead infer the anchor layout from radio
+measurements are surveyed in~\cite{ridolfi2021selfcal}. Recent work
+scales anchor calibration to large environments using Gaussian
+processes, but relies on a LiDAR-inertial odometry trajectory as
+input~\cite{yuan2025uwbgp}. In contrast, the self-survey used here
+requires only the pairwise ranges the anchors can already measure among
+themselves, and recovers the constellation by classical multidimensional
+scaling~\cite{torgerson1952mds}.

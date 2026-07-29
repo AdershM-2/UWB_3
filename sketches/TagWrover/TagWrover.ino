@@ -33,9 +33,32 @@
  */
 
 // ── Transport: pick exactly ONE ───────────────────────────────────────────────
-// #define UWB_HOSTLINK_SERIAL
-#define UWB_HOSTLINK_UDP
+ #define UWB_HOSTLINK_SERIAL
+//#define UWB_HOSTLINK_UDP
 #define UWB_USE_OLED
+
+// ── Coordination: pick exactly ONE ───────────────────────────────────────────
+// RING (default) — the two tags pass a token OVER THE AIR and each streams to
+//   the host independently. This is the long-proven WiFi setup.
+// WIRE — TagLink: this board becomes MASTER. It owns the ranging schedule,
+//   grants the other tag its air slot over a dedicated UART2 cable, and
+//   forwards that tag's data to the host on its own link. Exactly one DW1000
+//   transmits at a time and the air is never contended.
+//
+// To switch this board to wired master mode, swap the comment markers on the
+// next two lines AND on the transport pair above (WIRE mode is meant to be run
+// with UWB_HOSTLINK_SERIAL — one USB cable carries both tags):
+//#define UWB_COORD_RING
+#define UWB_COORD_WIRE
+#define UWB_WIRE_ROLE_MASTER    // this board has the IMU -> it is the master
+//
+// Wiring for WIRE mode (a shared ground is REQUIRED, not optional):
+//   this board GPIO 22 (TX) ──> other board GPIO 35 (RX)
+//   this board GPIO 35 (RX) <── other board GPIO 22 (TX)
+//   GND <──> GND
+#if defined(UWB_COORD_WIRE) && !defined(UWB_WIRE_ROLE_MASTER)
+#error "TagWrover is the IMU board: define UWB_WIRE_ROLE_MASTER with UWB_COORD_WIRE"
+#endif
 
 // ── Board pin overrides — MUST appear before #include <UwbRtls.h> ────────────
 // ESP32 UWB (non-Pro) uses DW1000 CS=4, not 21.
@@ -51,6 +74,7 @@
 #include <Wire.h>
 #include <Adafruit_BNO08x.h>
 #include <Preferences.h>
+#include <esp_timer.h>   // monotonic µs clock for the TagLink cycle timing
 
 // ── Configuration — edit these for your setup ─────────────────────────────────
 static const uint8_t  TAG_ID        = 0xF0;  // 0xF0 — Tag.ino boards use 0xF1
@@ -90,10 +114,16 @@ static const uint16_t CALIB_DELAY_HI = 16900;
 // ── Objects ───────────────────────────────────────────────────────────────────
 TwrEngine    engine;
 UwbScheduler scheduler;
-TagRing      ring;    // multi-tag coordination (one tag transmits at a time)
 HostLink     host;
 OledStatus   oled;
 Preferences  prefs;
+
+// Coordination — one of the two, chosen by the #define block at the top.
+#if defined(UWB_COORD_WIRE)
+TagLink      tagLink;   // wired master/slave TDMA over UART2
+#else
+TagRing      ring;      // over-air token (one tag transmits at a time)
+#endif
 
 static uint16_t g_antDelay = ANTENNA_DELAY;  // active own delay (NVS-backed)
 
@@ -201,6 +231,18 @@ static void printImuSerial() {
 }
 
 // Update OLED: UWB status on row 0, IMU data on rows 1-3.
+// Copy the latest BNO085 reading into the wire-format sample. Shared by both
+// cycles so the two code paths can never disagree about what "valid" means.
+static void fillImuSample(ImuSample& s) {
+  if (!imuPresent || !imuData.valid) return;
+  s.valid  = true;
+  s.status = imuData.status;
+  s.qw = imuData.qw;  s.qx = imuData.qx;
+  s.qy = imuData.qy;  s.qz = imuData.qz;
+  s.ax = imuData.ax;  s.ay = imuData.ay;  s.az = imuData.az;
+  s.gx = imuData.gx;  s.gy = imuData.gy;  s.gz = imuData.gz;
+}
+
 static void updateOled(uint8_t nGood) {
   char l0[22], l1[22], l2[22], l3[22];
   snprintf(l0, 22, "TAG:%02X  %u/%u OK", TAG_ID, nGood, N_ANCHORS);
@@ -273,6 +315,16 @@ static void runSurvey() {
 
 static char g_bootMsg[40];   // reset forensics line, sent once the host link is up
 
+// Bring up the coordination layer. Called from both transport branches of
+// setup(), after engine/scheduler are up and imuPresent is known.
+static inline void coordBegin() {
+#if defined(UWB_COORD_WIRE)
+  tagLink.begin(TAG_ROLE_MASTER, TAG_ID, imuPresent ? TAGLINK_CAP_IMU : 0);
+#else
+  ring.begin(&engine, TAG_ID, TAG_RING, RING_SIZE);
+#endif
+}
+
 // ── setup ─────────────────────────────────────────────────────────────────────
 void setup() {
   Serial.begin(115200);
@@ -330,14 +382,14 @@ void setup() {
   SPI.begin(UWB_PIN_SCK, UWB_PIN_MISO, UWB_PIN_MOSI);
   engine.begin(TWR_TAG, TAG_ID, g_antDelay);
   scheduler.begin(&engine, ANCHORS, N_ANCHORS);
-  ring.begin(&engine, TAG_ID, TAG_RING, RING_SIZE);
+  coordBegin();
   engine.printDeviceId();
 #else
   host.begin(115200);
   SPI.begin(UWB_PIN_SCK, UWB_PIN_MISO, UWB_PIN_MOSI);
   engine.begin(TWR_TAG, TAG_ID, g_antDelay);
   scheduler.begin(&engine, ANCHORS, N_ANCHORS);
-  ring.begin(&engine, TAG_ID, TAG_RING, RING_SIZE);
+  coordBegin();
   engine.printDeviceId();
 #endif
   host.sendRaw(g_bootMsg);   // why did we last reset? (PANIC/WDT/BROWNOUT/...)
@@ -584,6 +636,13 @@ static void dispatchCmd(const char* cmd) {
 }
 
 // ── loop ──────────────────────────────────────────────────────────────────────
+// Both cycle bodies are defined below; declare them so loop() can sit first.
+#if defined(UWB_COORD_WIRE)
+static void masterCycle();
+#else
+static void ringCycle();
+#endif
+
 void loop() {
   ChargeMode::checkAndSleep(&oled);   // jumper 13-14 enters charge mode at any time
 
@@ -606,46 +665,139 @@ void loop() {
     }
   }
 
-  // ── IMU poll before sweep (drain any queued BNO085 events) ───────────────
-  pollImu();
+#if defined(UWB_COORD_WIRE)
+  tagLink.poll();
+  masterCycle();
+#else
+  ringCycle();
+#endif
+}
 
-  // ── UWB ranging sweep (~100 ms for 4 anchors at 10 Hz) ───────────────────
-  // Multi-tag token ring: only sweep on our turn (hand off after sendSweep).
+// ── RING cycle (over-air token) ───────────────────────────────────────────────
+// Unchanged behaviour: sweep only on our turn, stream, hand the token on.
+#if !defined(UWB_COORD_WIRE)
+static void ringCycle() {
   static uint8_t nGood = 0;
+
+  pollImu();
   const bool myTurn = ring.poll();
   if (myTurn) nGood = scheduler.sweep();
+  pollImu();   // more BNO085 data accumulated during the ranging wait
 
-  // ── IMU poll after sweep (more data accumulated during the ranging wait) ──
-  pollImu();
-
-  // ── Build ImuSample for the RTLS host packet ──────────────────────────────
-  ImuSample imuSamp;
-  if (imuPresent && imuData.valid) {
-    imuSamp.valid  = true;
-    imuSamp.status = imuData.status;
-    imuSamp.qw = imuData.qw;  imuSamp.qx = imuData.qx;
-    imuSamp.qy = imuData.qy;  imuSamp.qz = imuData.qz;
-    imuSamp.ax = imuData.ax;  imuSamp.ay = imuData.ay;  imuSamp.az = imuData.az;
-    imuSamp.gx = imuData.gx;  imuSamp.gy = imuData.gy;  imuSamp.gz = imuData.gz;
-  }
-
-  // ── Send RTLS packet to host (IMU tail appended when valid) ───────────────
   if (myTurn) {
+    ImuSample imuSamp;
+    fillImuSample(imuSamp);
     // Phase-C wobble diagnostics: DW1000 die temperature + Vbat once per
     // sweep (SAR ADC; engine idles the radio for the read, then re-arms).
     float dieTempC = NAN, vbatV = NAN;
     engine.readTempVbat(dieTempC, vbatV);
     host.sendSweep(millis(), TAG_ID, scheduler,
-                   (imuPresent && imuData.valid) ? &imuSamp : nullptr,
-                   dieTempC, vbatV);
+                   imuSamp.valid ? &imuSamp : nullptr, dieTempC, vbatV);
     ring.handoff();
   }
 
-  // ── Human-readable outputs ────────────────────────────────────────────────
   printImuSerial();
   static uint32_t oledLast = 0;
-  if (millis() - oledLast > 500) {
-    oledLast = millis();
-    updateOled(nGood);
+  if (millis() - oledLast > 500) { oledLast = millis(); updateOled(nGood); }
+}
+#endif
+
+// ── MASTER cycle (TagLink) ────────────────────────────────────────────────────
+// The slave's slot is NOT wait time: GO is issued the moment our own sweep ends,
+// and everything below grantSlot (IMU, format, host send, OLED) runs while the
+// slave is sweeping. waitDone() then blocks only for whatever budget is left,
+// polling the IMU as idle work.
+#if defined(UWB_COORD_WIRE)
+static void masterCycle() {
+  static float   rateHz = 0.0f;
+  static uint8_t nGood  = 0;
+
+  int64_t  cycleStartUs = esp_timer_get_time();
+  uint16_t cycle = tagLink.startCycle();
+
+  // 1) Our own sweep, then free the air.
+  int64_t t0 = esp_timer_get_time();
+  nGood = scheduler.sweep();
+  uint32_t ownSweepUs = (uint32_t)(esp_timer_get_time() - t0);
+  float dieTempC = NAN, vbatV = NAN;
+  engine.readTempVbat(dieTempC, vbatV);   // idles + re-arms the radio internally
+  engine.setRadioState(RADIO_IDLE);
+
+  // 2) Grant the slave its slot FIRST — its sweep now overlaps our work.
+  bool granted = false;
+  if (tagLink.slavePresent()) { tagLink.grantSlot(); granted = true; }
+
+  // 3) Master's own processing, concurrent with the slave's sweep.
+  int64_t procT0 = esp_timer_get_time();
+  pollImu();
+  ImuSample imuSamp;
+  fillImuSample(imuSamp);
+
+  char line[768];
+  int len = HostLink::format(line, sizeof(line), millis(), TAG_ID, scheduler,
+                             imuSamp.valid ? &imuSamp : nullptr, dieTempC, vbatV);
+  if (len > 0) {
+    len = HostLink::appendTail(line, sizeof(line), len, ",CYC,%u", cycle);
+    host.sendLine(line, len);
+  }
+
+  printImuSerial();
+  static uint32_t oledLast = 0;
+  if (millis() - oledLast > 500) { oledLast = millis(); updateOled(nGood); }
+  uint32_t procUs = (uint32_t)(esp_timer_get_time() - procT0);
+
+  // 4) Collect the slave's slot (IMU keeps draining as idle work).
+  uint32_t slaveSweepUs = 0;
+  if (granted) {
+    tagLink.waitDone(pollImu);
+    if (tagLink.hasData()) {
+      slaveSweepUs = tagLink.dataSweepUs();
+      int slen = HostLink::format(line, sizeof(line), tagLink.dataTagMs(),
+                                  tagLink.dataTagId(), tagLink.dataRanges(),
+                                  tagLink.dataCount());
+      if (slen > 0) {
+        slen = HostLink::appendTail(line, sizeof(line), slen, ",CYC,%u,MRX,%llu",
+                                    cycle, (unsigned long long)tagLink.dataRxTimeUs());
+        host.sendLine(line, slen);
+      }
+    }
+  }
+  engine.setRadioState(RADIO_ACTIVE);   // take the air back for the next sweep
+
+  // 5) Per-cycle time budget — the "where does the time go" input.
+  //    DIAG,v1,<cycle>,<cycle_start_us>,<master_sweep_us>,<slave_sweep_us>,
+  //            <uart_wait_us>,<proc_us>,<idle_us>,<total_us>
+  uint32_t uartWaitUs = granted ? tagLink.lastUartWaitUs() : 0;
+  uint32_t totalUs    = (uint32_t)(esp_timer_get_time() - cycleStartUs);
+  uint32_t accounted  = ownSweepUs + procUs + uartWaitUs;
+  uint32_t idleUs     = (totalUs > accounted) ? (totalUs - accounted) : 0;
+  char diag[128];
+  int dlen = snprintf(diag, sizeof(diag),
+                      "DIAG,v1,%u,%lld,%lu,%lu,%lu,%lu,%lu,%lu\n",
+                      cycle, (long long)cycleStartUs,
+                      (unsigned long)ownSweepUs, (unsigned long)slaveSweepUs,
+                      (unsigned long)uartWaitUs, (unsigned long)procUs,
+                      (unsigned long)idleUs, (unsigned long)totalUs);
+  if (dlen > 0 && dlen < (int)sizeof(diag)) host.sendLine(diag, dlen);
+
+  if (totalUs > 0) {
+    float hz = 1e6f / (float)totalUs;
+    rateHz = (rateHz == 0.0f) ? hz : rateHz + 0.2f * (hz - rateHz);
+  }
+
+  // Rate-limited human-readable summary (+ link health: crc spike = bad cable).
+  static uint32_t timeLast = 0;
+  if (millis() - timeLast > 2000) {
+    timeLast = millis();
+    const TagLinkStats& s = tagLink.stats();
+    Serial.printf("[TIME] cycle=%u own=%.1fms slave=%.1fms uart=%.1fms proc=%.1fms"
+                  " total=%.1fms rate=%.1fHz | crc=%lu resync=%lu stale=%lu"
+                  " gap=%lu dup=%lu tmo=%lu\n",
+                  cycle, ownSweepUs / 1e3f, slaveSweepUs / 1e3f, uartWaitUs / 1e3f,
+                  procUs / 1e3f, totalUs / 1e3f, rateHz,
+                  (unsigned long)s.crcErr, (unsigned long)s.resync,
+                  (unsigned long)s.staleCycle, (unsigned long)s.seqGap,
+                  (unsigned long)s.seqDup, (unsigned long)s.slotTimeout);
   }
 }
+#endif

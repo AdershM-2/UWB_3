@@ -1,0 +1,19 @@
+This paper presents DUNE, an open-source indoor ultra-wideband (UWB)
+positioning system for small mobile robots built from commodity
+DecaWave~DW1000 transceivers. The system integrates a two-stage range
+calibration that removes antenna-delay and received-power biases, a
+continuous non-line-of-sight (NLOS) weighting derived from the
+first-path-to-total received-power ratio, and a moving-horizon estimator
+that exploits a two-tag rigid-body constraint to observe heading. Anchor
+coordinates are determined automatically from inter-anchor ranging,
+eliminating any external survey of the infrastructure. As the estimator
+depends only on standard range and first-path-power reports, it applies
+without modification to successor transceivers such as the DW3000. The
+system is evaluated on a five-anchor sand-arena testbed against an
+overhead-camera reference: calibration reduces the single-reading
+horizontal error from \SI{199}{} to \SI{94}{\milli\meter}, temporal
+filtering attains \SI{60}{}--\SI{65}{\milli\meter} at rest, the
+self-survey recovers the anchor geometry to \SI{51}{\milli\meter}, and a
+driven trajectory under continuous ground truth is tracked at
+\SI{124}{\milli\meter} RMSE. The complete firmware, host software,
+calibration data, and logs are released.

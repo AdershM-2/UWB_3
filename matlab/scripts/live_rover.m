@@ -1,10 +1,14 @@
 function live_rover(opts)
-%LIVE_ROVER Live rigid two-tag rover pose over WiFi/UDP (MHE only).
+%LIVE_ROVER Live rigid two-tag rover pose (MHE only).
 %   live_rover                        % both tags over UDP:4100
+%   live_rover(transport="serial")    % wired tags, both on one COM port
 %   live_rover(baseline=0.50)
 %
-%   Both tags UDP-broadcast their sweeps (HostLink UDP); one dune.TagUdp socket
-%   ingests BOTH and demuxes by tag_id. Every sweep - from either tag - is fed
+%   Two firmware builds feed this. With UWB_COORD_RING both tags UDP-broadcast
+%   their sweeps (HostLink UDP). With UWB_COORD_WIRE the IMU master grants the
+%   other tag its slot over a UART cable and forwards its line, so both arrive
+%   on one USB serial port. Either way a single link object ingests BOTH and
+%   demuxes by tag_id. Every sweep - from either tag - is fed
 %   as its own node to dune.MheRigid, which estimates ONE rigid body pose
 %   [cx cy psi speed] with the non-holonomic unicycle model:
 %     * inter-tag DISTANCE is exact (baked into the parameterisation),
@@ -23,22 +27,28 @@ function live_rover(opts)
 %   dead-reckoned estimate away from reality.
 
 arguments
-    opts.baseline (1,1) double = 0.527    % L, antenna centre-to-centre - MEASURE
+    opts.baseline (1,1) double = 0.55     % L, antenna centre-to-centre - MEASURE
     opts.frontTag (1,1) double = 241
     opts.rearTag (1,1) double = 240
+    opts.transport string = "udp"         % "udp" | "serial" (wired master/slave
+                                          %   tags: both arrive on one COM port)
     opts.udpPort (1,1) double = 4100
+    opts.com string = ""                  % master tag's port; "" = auto-detect
     opts.tagZ (1,1) double = 0.24
     opts.horizon (1,1) double = 12
+    opts.speedMax (1,1) double = 0.15     % m/s, bound on MHE body speed
+                                          % (rover_teleop_uwb's V_MAX is 0.10 -
+                                          % this has margin for slack).
+    opts.allowReverse (1,1) logical = false  % forward-only by default (this
+                                          % rover is driven forward-only live).
+                                          % Removes the unicycle sign-flip
+                                          % degeneracy that jitters heading/speed
+                                          % at rest - see dune.MheRigid. Pass
+                                          % true only if you actually reverse.
     opts.powerCorr (1,1) logical = true
     opts.nlos (1,1) logical = true
     opts.coastLimit (1,1) double = 2.0    % s without any fix -> freeze display
-    opts.pin (1,1) logical = true         % freeze the DISPLAYED pose (centre AND
-                                          % yaw) while the rig is still and inside
-                                          % pinRadius. Cosmetic: the raw MHE pose
-                                          % is still what gets logged.
-    opts.pinRadius (1,1) double = 0.05    % m deadband (the breathing lives below
-                                          % ~5-7 cm - see docs/phase_a_findings.md)
-    opts.smooth (1,1) double = 0.6        % output EMA on the MOVING pose
+    opts.smooth (1,1) double = 0.6        % output EMA on the displayed pose
                                           % (0<a<1, 1 = off); yaw smoothed circularly
     opts.trail (1,1) double = 400
     opts.margin (1,1) double = 2.0
@@ -57,21 +67,36 @@ if ~exist(opts.logDir, 'dir'), mkdir(opts.logDir); end
 logFile = fullfile(opts.logDir, ['rover_log_' stamp '.jsonl']);
 fid = fopen(logFile, 'w');
 
-tu = dune.TagUdp(opts.udpPort);
+switch lower(opts.transport)
+    case "udp"
+        tu = dune.TagUdp(opts.udpPort);
+        srcLabel = sprintf('UDP:%d', opts.udpPort);
+    case "serial"
+        % Wired master/slave firmware: the master forwards the slave's lines,
+        % so both tag ids arrive on this one port and the demux is unchanged.
+        if strlength(opts.com) == 0, tu = dune.TagSerial();
+        else,                        tu = dune.TagSerial(opts.com);
+        end
+        srcLabel = sprintf('SERIAL:%s', tu.port);
+    otherwise
+        error('live_rover:badTransport', ...
+              'transport must be "udp" or "serial", got "%s"', opts.transport);
+end
 tu.rawLogFid = fopen(fullfile(opts.logDir, ['udp_raw_' stamp '.log']), 'w');
 cleanup = onCleanup(@() endSession(tu, fid, logFile));
 tu.start();
-fprintf('live_rover: UDP:%d | front=%d rear=%d | L=%.3f m | %s\n', ...
-        opts.udpPort, opts.frontTag, opts.rearTag, opts.baseline, A.layout);
+fprintf('live_rover: %s | front=%d rear=%d | L=%.3f m | %s\n', ...
+        srcLabel, opts.frontTag, opts.rearTag, opts.baseline, A.layout);
 fprintf('Logging to %s\n', logFile);
 
 mr = dune.MheRigid(A.pos);
 mr.baseline = opts.baseline; mr.horizon = opts.horizon; mr.tagZ = opts.tagZ;
+mr.speedMax = opts.speedMax; mr.allowReverse = opts.allowReverse;
 mr.build();
 fprintf('MheRigid built (horizon %d, CasADi/IPOPT).\n', opts.horizon);
 
 %% Figure
-fig = figure('Name', sprintf('DUNE rover - UDP:%d', opts.udpPort), 'NumberTitle', 'off');
+fig = figure('Name', sprintf('DUNE rover - %s', srcLabel), 'NumberTitle', 'off');
 ax = axes(fig); hold(ax, 'on'); axis(ax, 'equal'); grid(ax, 'on');
 anchH = scatter(ax, A.pos(:,1), A.pos(:,2), 90, [0 0.6 0], '^', 'filled', ...
                 'MarkerEdgeColor', 'k');
@@ -102,12 +127,17 @@ histA = nan(1,8); histG = nan(1,8); still = false;
 tPrev = NaN; tLastFix = NaN;
 nSweeps = 0; nPose = 0; tRate = [];
 pose = [NaN NaN NaN NaN];
-pinPose = [NaN NaN NaN]; pinOut = 0; pinned = false;   % output-pin state
 smoothC = [NaN NaN]; smoothPsi = NaN;                  % output EMA state
 
 while ishandle(fig)
     for e = tu.drainEvents()
-        fprintf('[dev %s] %s\n', e{1}.srcIp, e{1}.line);
+        % dune.TagUdp events carry srcIp (multiple senders on one socket);
+        % dune.TagSerial events do not (one connection, nothing to disambiguate).
+        if isfield(e{1}, 'srcIp')
+            fprintf('[dev %s] %s\n', e{1}.srcIp, e{1}.line);
+        else
+            fprintf('[dev] %s\n', e{1}.line);
+        end
     end
     for c = tu.drain()
         s = c{1};
@@ -150,35 +180,27 @@ while ishandle(fig)
             tRate(tRate < s.thost - 10) = [];
         end
 
-        % ---- Output pin + smoother (COSMETIC: the raw MHE pose is logged) --
-        % Parked, the true pose is constant, so sub-radius movement is the
-        % known per-anchor breathing (docs/phase_a_findings.md), not motion:
-        % freeze the DISPLAYED centre AND yaw. Moving, a light circular EMA
-        % takes the high-frequency jitter off. The estimator is untouched.
+        % ---- Output smoother (COSMETIC ONLY: the raw MHE pose is logged) -----
+        % A light circular EMA low-pass on the DISPLAYED pose - it attenuates
+        % the visible high-frequency jitter uniformly, needing no still/moving
+        % decision. That distinction is deliberately NOT attempted here: on this
+        % rover the 0.1 m/s motion sits below the UWB range noise and the IMU
+        % noise floor, so every stillness signal we tested (V_cmd, IMU accel,
+        % gyro, raw-position window, MHE speed) failed - and a displacement
+        % deadband gated on the pose failed the same way offline (it froze the
+        % marker DURING motion as often as when parked). The EMA is the one
+        % lever that works without that decision; opts.smooth trades jitter for
+        % lag (lower = calmer + laggier). The estimator and the log are untouched.
         poseOut = pose;
-        pinned = false;
         if all(isfinite(pose))
-            if opts.pin && still
-                if any(~isfinite(pinPose)), pinPose = pose(1:3); pinOut = 0; end
-                if norm(pose(1:2) - pinPose(1:2)) >= opts.pinRadius
-                    pinOut = pinOut + 1;
-                    if pinOut >= 8, pinPose = pose(1:3); pinOut = 0; end
-                else
-                    pinOut = 0;
-                end
-                poseOut(1:3) = pinPose; pinned = true;
-                smoothC = poseOut(1:2); smoothPsi = poseOut(3);   % reseed EMA
+            if opts.smooth < 1 && all(isfinite(smoothC)) && isfinite(smoothPsi)
+                smoothC = opts.smooth*pose(1:2) + (1-opts.smooth)*smoothC;
+                sv = opts.smooth*[cos(pose(3)) sin(pose(3))] + ...
+                     (1-opts.smooth)*[cos(smoothPsi) sin(smoothPsi)];
+                smoothPsi = atan2(sv(2), sv(1));      % circular EMA for yaw
+                poseOut(1:2) = smoothC; poseOut(3) = smoothPsi;
             else
-                pinPose = [NaN NaN NaN]; pinOut = 0;
-                if opts.smooth < 1 && all(isfinite(smoothC)) && isfinite(smoothPsi)
-                    smoothC = opts.smooth*pose(1:2) + (1-opts.smooth)*smoothC;
-                    sv = opts.smooth*[cos(pose(3)) sin(pose(3))] + ...
-                         (1-opts.smooth)*[cos(smoothPsi) sin(smoothPsi)];
-                    smoothPsi = atan2(sv(2), sv(1));      % circular EMA for yaw
-                    poseOut(1:2) = smoothC; poseOut(3) = smoothPsi;
-                else
-                    smoothC = pose(1:2); smoothPsi = pose(3);
-                end
+                smoothC = pose(1:2); smoothPsi = pose(3);
             end
         end
 
@@ -198,7 +220,6 @@ while ishandle(fig)
             rec.psi = round(pose(3),4); rec.speed = round(pose(4),4);
         end
         rec.roll = round(rollHold,4); rec.pitch = round(pitchHold,4);
-        rec.pinned = pinned;
         if isfinite(imuYaw), rec.imuYaw = round(imuYaw,4); end
         if isfinite(yawRaw), rec.yawRaw = round(yawRaw,4); end
         fprintf(fid, '%s\n', jsonencode(rec));
@@ -249,7 +270,6 @@ while ishandle(fig)
         stateStr = 'MHE';
         if coasting, stateStr = 'COASTING - display frozen'; end
         if still, stateStr = [stateStr ' STILL']; end
-        if pinned, stateStr = [stateStr ' PIN']; end
         if all(isfinite(poseOut))
             ttl.String = sprintf(['rover %s  (%.2f, %.2f) m  %s deg  v %.2f m/s  ' ...
                 'roll %+.1f pitch %+.1f  %.1f Hz  %d/%d anch%s  poses %d/%d'], ...

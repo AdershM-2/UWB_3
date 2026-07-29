@@ -1,83 +1,29 @@
 {
   "schema": "dune_delay_calibration_v1",
-  "timestamp": "2026-07-20T19:23:41",
+  "timestamp": "2026-07-28T23:39:40",
   "method": "HWCALIB on-device binary search vs Kinect click-truth",
   "reference_tag": 240,
   "reference_tag_delay_ticks": 16360,
   "truth_file": "D:\\UWB_3\\matlab\\config\\tag_truth.json",
   "truth_tag_xy": [
-    0.1065,
-    0.4424
+    -0.4623,
+    1.1872
   ],
   "truth_tag_z": 0.24,
   "registration_rmse_m": 0.013502720558675605,
-  "position_err_mm_before": 179.2,
-  "position_err_mm_after": 213.9,
-  "anchors": [
-    {
-      "id": 1,
-      "true_m": 2.8671,
-      "before_med_m": 3.186,
-      "after_med_m": 3.209,
-      "before_err_mm": 319,
-      "after_err_mm": 342,
-      "n_before": 70,
-      "n_after": 69,
-      "delay_ticks": 16429,
-      "ok": true,
-      "verdict": "CHECK"
-    },
-    {
-      "id": 2,
-      "true_m": 3.626,
-      "before_med_m": 3.782,
-      "after_med_m": 3.683,
-      "before_err_mm": 156,
-      "after_err_mm": 57,
-      "n_before": 65,
-      "n_after": 65,
-      "delay_ticks": 16506,
-      "ok": true,
-      "verdict": "OK"
-    },
-    {
-      "id": 3,
-      "true_m": 3.732,
-      "before_med_m": 4.223,
-      "after_med_m": 4.237,
-      "before_err_mm": 491,
-      "after_err_mm": 505,
-      "n_before": 74,
-      "n_after": 71,
-      "delay_ticks": 16378,
-      "ok": true,
-      "verdict": "CHECK"
-    },
-    {
-      "id": 4,
-      "true_m": 3.0073,
-      "before_med_m": 3.303,
-      "after_med_m": 3.312,
-      "before_err_mm": 296,
-      "after_err_mm": 305,
-      "n_before": 73,
-      "n_after": 73,
-      "delay_ticks": 16418,
-      "ok": true,
-      "verdict": "CHECK"
-    },
-    {
-      "id": 5,
-      "true_m": 1.9555,
-      "before_med_m": 2.032,
-      "after_med_m": 2.032,
-      "before_err_mm": 77,
-      "after_err_mm": 77,
-      "n_before": 74,
-      "n_after": 73,
-      "delay_ticks": 16537,
-      "ok": true,
-      "verdict": "CHECK"
-    }
-  ]
+  "position_err_mm_before": null,
+  "position_err_mm_after": null,
+  "anchors": {
+    "id": 5,
+    "true_m": 1.9599,
+    "before_med_m": 2.609,
+    "after_med_m": 2.074,
+    "before_err_mm": 649,
+    "after_err_mm": 114,
+    "n_before": 47,
+    "n_after": 46,
+    "delay_ticks": 16548,
+    "ok": true,
+    "verdict": "CHECK"
+  }
 }

@@ -1,0 +1,17 @@
+\section{Conclusion}
+\label{sec:conclusion}
+
+We presented DUNE, a complete and openly released indoor UWB positioning
+stack for a small mobile robot. Its accuracy follows from a two-step
+range calibration, a continuous first-path-power NLOS weighting, and a
+moving-horizon estimator with a two-tag rigid-body constraint, while the
+anchor geometry is obtained automatically from inter-anchor ranging
+rather than external survey. The system achieves a filtered static
+accuracy of \SI{60}{}--\SI{65}{\milli\meter} and reconstructs the anchor
+layout to \SI{51}{\milli\meter} of an optical reference. Because it
+operates only on standard range and first-path-power reports, the
+pipeline transfers without modification to newer transceivers such as the
+DW3000. Ongoing work addresses the moving-accuracy gap through tighter
+range gating and higher sweep rates. All firmware, host software,
+calibration data, and logs are released to support reproduction and
+extension.

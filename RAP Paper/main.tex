@@ -1,0 +1,92 @@
+% =====================================================================
+% DUNE — IEEE Robotics and Automation Practice (RA-P) submission
+%
+% RA-P is a short, practice-first journal. Target length: keep the body
+% at/under 6 pages INCLUDING references (the four sample papers run 5-6).
+% Verify the exact page limit against the current RA-P author guidelines
+% before final submission.
+%
+% Build:  pdflatex main && bibtex main && pdflatex main && pdflatex main
+% =====================================================================
+\documentclass[10pt,journal,letterpaper]{IEEEtran}
+
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{amsmath,amssymb,bm}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{url}
+\usepackage{xcolor}
+\usepackage{siunitx}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,calc,shapes.geometric,fit,backgrounds,decorations.pathreplacing}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.18}
+\usepackage{placeins}
+\usepackage[hidelinks]{hyperref}
+\usepackage{cite}
+
+% --- shared figure palette (matches text, colour-blind safe) ---
+\definecolor{cBlue}{HTML}{2A6EBB}
+\definecolor{cBlueL}{HTML}{DCEAF7}
+\definecolor{cGreen}{HTML}{2E7D57}
+\definecolor{cGreenL}{HTML}{D3ECE0}
+\definecolor{cAmber}{HTML}{B5730A}
+\definecolor{cAmberL}{HTML}{F6E4BE}
+\definecolor{cRed}{HTML}{B23A2E}
+\definecolor{cRedL}{HTML}{F5D6D1}
+\definecolor{cGray}{HTML}{5B6470}
+\definecolor{cGrayL}{HTML}{ECEEF1}
+
+% --- draft aids (remove before submission) ---
+\newcommand{\todo}[1]{\textcolor{red}{\textbf{[TODO: #1]}}}
+
+% --- notation ---
+\newcommand{\pvec}{\mathbf{p}}
+\newcommand{\avec}{\mathbf{a}}
+\newcommand{\xvec}{\mathbf{x}}
+
+\begin{document}
+
+\title{DUNE: A Reproducible, Low-Cost Indoor UWB\\
+  Positioning Stack for Small Rovers}
+
+\author{Adersh~Maruvattu,~Atharva~Chavan,~and~Ashish~Dutta% <-this % stops a space
+\thanks{Manuscript received \todo{date}; revised \todo{date}.}%
+\thanks{A.~Maruvattu and A.~Chavan contributed equally to this work.}%
+\thanks{A.~Maruvattu and A.~Dutta are with the Indian Institute of
+  Technology Kanpur, Kanpur, India (e-mail: adm20@iitk.ac.in;
+  adutta@iitk.ac.in).}%
+\thanks{A.~Chavan is with the Indian Institute of Technology Indore,
+  Indore, India (e-mail: me240003021@iiti.ac.in).}%
+\thanks{Code, calibration data, and logs:
+  \url{https://github.com/AdershM-2/UWB_3}.}}
+
+\markboth{IEEE Robotics and Automation Practice (RA-P), Preprint}%
+{Maruvattu \MakeLowercase{\textit{et al.}}: DUNE: A Reproducible, Low-Cost Indoor UWB Positioning Stack for Small Rovers}
+
+\maketitle
+
+\begin{abstract}
+\input{sections/abstract}
+\end{abstract}
+
+\begin{IEEEkeywords}
+Ultra-wideband, indoor localization, range sensing, NLOS mitigation,
+sensor fusion, calibration, reproducible robotics.
+\end{IEEEkeywords}
+
+\IEEEpeerreviewmaketitle
+
+\input{sections/introduction}
+\input{sections/related_work}
+\input{sections/problem}
+\input{sections/methodology}
+\input{sections/results}
+\input{sections/conclusion}
+\input{sections/implementation}
+
+\bibliographystyle{IEEEtran}
+\bibliography{refs}
+
+\end{document}

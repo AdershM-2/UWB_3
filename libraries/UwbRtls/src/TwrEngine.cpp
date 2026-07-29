@@ -52,6 +52,27 @@ void TwrEngine::startRx() {
   DW1000.setDefaults();
   DW1000.receivePermanently(true);  // chip re-arms RX automatically after a frame
   DW1000.startReceive();
+  _radioState = RADIO_ACTIVE;       // every internal re-arm leaves us active
+}
+
+// ===========================================================================
+// Radio slot control (multi-tag TDMA over the TagLink UART)
+// ===========================================================================
+void TwrEngine::setRadioState(RadioState state) {
+  if (state == _radioState) return;
+  switch (state) {
+    case RADIO_ACTIVE:
+      startRx();
+      break;
+    case RADIO_IDLE:
+      DW1000.idle();          // TRXOFF: no RX events, no TX, chip stays clocked
+      break;
+    default:
+      Serial.printf("[TWR] setRadioState(%u): state reserved, not implemented\n",
+                    (unsigned)state);
+      return;                 // keep current state
+  }
+  _radioState = state;
 }
 
 // NOTE: DW1000 events are serviced in TASK context (DW1000.pollIrq()) — the pin

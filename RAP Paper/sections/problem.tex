@@ -1,0 +1,42 @@
+\section{Problem Definition}
+\label{sec:problem}
+
+Consider a set of $N\!\ge\!4$ fixed anchors with positions
+$\{\avec_k\}_{k=1}^{N}\subset\mathbb{R}^3$ expressed in a common world
+frame. A rover carries $M\in\{1,2\}$ tags on a rigid plate; for $M{=}2$
+the two tag antennas are separated by a known baseline $L$. The rover
+motion is planar, so its configuration is the body pose
+$\xvec=(c_x,c_y,\psi)\in SE(2)$---planar position $\mathbf{c}$ and
+heading $\psi$---which is extended to the full six-degree-of-freedom
+pose using the height $z$ and the roll and pitch $(\phi,\theta)$ read
+from the on-board IMU. The two tag positions follow from the body pose
+as
+\begin{equation}
+  \pvec_{1,2} = \mathbf{c} \pm \tfrac{L}{2}\,[\cos\psi,\ \sin\psi]^{\!\top},
+  \label{eq:rigid}
+\end{equation}
+for the front and rear tag respectively.
+
+Each double-sided two-way ranging exchange between tag $i$ and anchor
+$k$ produces a range estimate that departs from the true geometric
+distance by several additive terms,
+\begin{equation}
+  \rho_{ik} = \lVert \pvec_i - \avec_k \rVert
+            + \delta_k + \gamma_k(P_{ik}) + \Delta_{ik} + \varepsilon_{ik},
+  \label{eq:measmodel}
+\end{equation}
+where $\delta_k$ is the per-anchor antenna-delay bias, $\gamma_k(P_{ik})$
+a bias that depends on the received power $P_{ik}$, $\Delta_{ik}\ge 0$
+the excess path length introduced under NLOS conditions, and
+$\varepsilon_{ik}\sim\mathcal{N}(0,\sigma^2)$ zero-mean measurement
+noise. The tags report at different instants, so the ranges arrive
+asynchronously rather than as synchronized snapshots.
+
+The problem is twofold. First, given the anchor positions and a stream
+of asynchronous ranges~\eqref{eq:measmodel}, estimate the body
+trajectory $\{\xvec_t\}$ online at the sensor rate ($\ge\!5$\,Hz) while
+suppressing the systematic biases and NLOS excess. Second, when the
+anchor positions are not externally available, estimate
+$\{\avec_k\}$ from inter-anchor ranging alone. The remainder of the
+paper addresses these two problems and evaluates the resulting accuracy
+against an independent optical ground truth.

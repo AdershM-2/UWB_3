@@ -16,6 +16,15 @@ arguments
     opts.gyroSigma (1,1) double = 0.01
     opts.dur (1,1) double = 14         % s
     opts.rate (1,1) double = 6         % total sweeps/s (both tags interleaved)
+    opts.speedMax (1,1) double = 0.6   % m/s, MheRigid bound - a synthetic test
+                                       % knob, NOT the real rover's V_MAX (this
+                                       % test's default R=1.0 m, w=0.30 rad/s
+                                       % arc runs at 0.30 m/s; keep margin above
+                                       % whatever R/w you pass)
+    opts.allowReverse (1,1) logical = true  % the synthetic arc is forward
+                                       % (positive speed), so false must give
+                                       % the same result - a check of the
+                                       % forward-only path.
     opts.casadiPath string = "C:\Users\itisa\Downloads\casadi-3.7.0"
     opts.plot (1,1) logical = true
 end
@@ -37,7 +46,8 @@ spdTrue = R * w;
 % ---- per-node tag geometry (terrain-aware, mirrors MheRigid) -------------
 lh = L2 * cos(opts.pitch);
 mr = dune.MheRigid(A.pos);
-mr.baseline = L; mr.horizon = 12; mr.tagZ = 0.24;
+mr.baseline = L; mr.horizon = 12; mr.tagZ = 0.24; mr.speedMax = opts.speedMax;
+mr.allowReverse = opts.allowReverse;
 mr.build();
 
 isFront = mod(0:n-1, 2)' == 0;                 % alternate front/rear sweeps

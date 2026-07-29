@@ -43,23 +43,46 @@ MMS_ROOT = 'D:\MMS_Codebase\matlab';
 COM_PORT = 'COM8';
 APRILTAG_ID = 0;
 
+% --- Ground-truth source for the AprilTag pose ---
+%   "dune" - grab the Kinect frame via hw.getColorFrame() and run the DUNE
+%            calibrated vision pipeline (visionSystemConfig + registered world
+%            extrinsics) on it. Truth lands DIRECTLY in the UWB anchor frame and
+%            uses the in-situ camera calibration + world registration this
+%            project maintains under matlab/vision/calibration_data.
+%   "mms"  - legacy: hw.getRoverPose(), which uses the MMS RoverControl's own
+%            hard-coded intrinsics/height and its analytic nadir transform.
+% Both only affect the LOGGED truth (control is manual); "dune" is the source
+% the anchor-geometry / delay calibration was built against, so it makes the
+% rover truth and the UWB solve share one calibrated frame.
+TRUTH_SOURCE = "dune";     % "dune" | "mms"
+
 % --- UWB capture (DUNE addition) ---
 UWB_ENABLE   = true;
-UWB_PORT     = 4100;      % HostLink UDP broadcast port
+% Transport must match how the tag firmware is built:
+%   "udp"    - both tags run UWB_COORD_RING + UWB_HOSTLINK_UDP and broadcast
+%              independently over WiFi (the long-proven setup).
+%   "serial" - the tags run UWB_COORD_WIRE: the IMU master owns the schedule,
+%              grants the other tag its slot over the UART cable, and forwards
+%              both tags' lines down ONE USB link.
+% Either way the ingest is tag-agnostic - dune.TagUdp and dune.TagSerial share
+% start/drain/drainEvents/stop and the consumer demuxes on s.tag - so nothing
+% downstream of this switch changes.
+UWB_TRANSPORT = "serial";    % "udp" | "serial"
+UWB_PORT     = 4100;      % HostLink UDP broadcast port ("udp" only)
+UWB_TAG_COM  = "COM12";        % master tag's COM port ("serial"; "" = auto-detect)
 UWB_FRONT_TAG = 241;      % no IMU, mounted in front
 UWB_REAR_TAG  = 240;      % BNO085, mounted behind
-UWB_BASELINE  = 0.527;    % m, antenna centre-to-centre (measured 52.7 cm)
+UWB_BASELINE  = 0.55;     % m, antenna centre-to-centre (both tags on the rover
+                          % centre line, measured 55 cm 2026-07-26; was 0.60)
 
 % AprilTag centre relative to the UWB rig, in ROVER BODY axes (metres):
 %   x = forward (rear tag -> front tag), y = left.
-% MEASURED 2026-07-22 (user diagram + confirmation):
-%   baseline 52.7 cm  =>  half = 26.35 cm; rear tag 240 at x = -0.2635
-%   AprilTag centre is 15 cm forward of the REAR tag (240, the IMU one)
-%       ->  x = -0.2635 + 0.15 = -0.1135  (11.35 cm BEHIND the rig centre)
-%   AprilTag is 10 cm to the rover's RIGHT  ->  y = -0.10  (y is +left)
+% 2026-07-26: AprilTag re-mounted EXACTLY at the rig centre -> zero lever arm.
+%   (Was [-0.1135, -0.10] when mounted 11.35 cm behind / 10 cm right of centre.)
 % Used in analysis as: truth_centre = apriltag_xy - R(yaw) * offset
-% (the lever arm rotates with heading, so it must be de-rotated, not subtracted).
-APRILTAG_OFFSET_BODY = [-0.1135, -0.10];
+% (a non-zero lever arm rotates with heading, so it must be de-rotated; with a
+%  zero offset the tag pose IS the rig centre and the de-rotation is a no-op.)
+APRILTAG_OFFSET_BODY = [0, 0];
 
 % Frame relation between the Kinect/AprilTag world and the UWB anchor world is
 % NOT assumed. Both are logged RAW; fit the 2D rigid transform offline.
@@ -117,8 +140,26 @@ for k = 1:numel(mmsDirs)
     end
     addpath(mmsDirs{k});
 end
+addpath(fullfile(DUNE_ROOT, 'vision'));   % DUNE calibrated vision (must win over MMS)
 fprintf('Paths: DUNE %s + %d MMS dependency folders (read-only)\n', ...
         DUNE_ROOT, numel(mmsDirs));
+
+% Load the DUNE ground-truth vision calibration when selected. Its registered
+% world extrinsics put the AprilTag straight into the UWB anchor frame.
+visionCfg = [];
+if lower(TRUTH_SOURCE) == "dune"
+    visionCfg = visionSystemConfig();
+    if ~visionCfg.extrinsics.available
+        warning(['DUNE world registration not found (matlab/vision/calibration_data/' ...
+                 'world_registration.mat) — truth will use the plumb-camera nadir ' ...
+                 'fallback, NOT the anchor frame. Run registerWorldFrame first.']);
+    else
+        fprintf('Ground truth: DUNE vision, registered world frame (RMSE %.1f mm)\n', ...
+                1000*visionCfg.extrinsics.rmse_m);
+    end
+else
+    fprintf('Ground truth: MMS legacy hw.getRoverPose()\n');
+end
 
 %% ========================================
 %% INITIALIZE HARDWARE
@@ -133,19 +174,16 @@ hw.setNoPivotMode(true);  % Ackermann-only
 hw.initializeKinect();
 pause(1);
 
-fprintf('Verifying AprilTag detection...\n');
+fprintf('Verifying AprilTag detection (%s truth)...\n', TRUTH_SOURCE);
 aprilTagOK = false;
 for retry = 1:MAX_RETRIES
-    try
-        [roverPos, ~] = hw.getRoverPose();
-        if ~isempty(roverPos)
-            fprintf('  AprilTag detected at [%.2f, %.2f, %.2f] m\n', roverPos);
-            aprilTagOK = true;
-            break;
-        end
-    catch
-        pause(RETRY_DELAY);
+    [roverPos, ~, det] = getTruthPose(hw, TRUTH_SOURCE, visionCfg, APRILTAG_ID, 1, 0);
+    if det
+        fprintf('  AprilTag detected at [%.2f, %.2f, %.2f] m\n', roverPos);
+        aprilTagOK = true;
+        break;
     end
+    pause(RETRY_DELAY);
 end
 if ~aprilTagOK
     error('Cannot detect AprilTag ID %d after %d retries', APRILTAG_ID, MAX_RETRIES);
@@ -194,14 +232,34 @@ A = dune.loadAnchors();
 uwbM = numel(A.ids);
 tu = [];
 if UWB_ENABLE
-    fprintf('Starting UWB UDP capture on port %d ...\n', UWB_PORT);
-    tu = dune.TagUdp(UWB_PORT);
+    switch lower(string(UWB_TRANSPORT))
+        case "udp"
+            fprintf('Starting UWB UDP capture on port %d ...\n', UWB_PORT);
+            tu = dune.TagUdp(UWB_PORT);
+        case "serial"
+            if strlength(UWB_TAG_COM) == 0
+                fprintf('Starting UWB serial capture (auto-detect port) ...\n');
+                tu = dune.TagSerial();      % errors if the port is ambiguous
+            else
+                fprintf('Starting UWB serial capture on %s ...\n', UWB_TAG_COM);
+                tu = dune.TagSerial(UWB_TAG_COM);
+            end
+        otherwise
+            error('rover_teleop_uwb:badTransport', ...
+                  'UWB_TRANSPORT must be "udp" or "serial", got "%s"', UWB_TRANSPORT);
+    end
     tu.start();
     pause(1.0);
     tu.drain();                                  % flush anything stale
     fprintf('  listening (anchors: %s)\n', A.layout);
-    fprintf('  NOTE: if no sweeps arrive, allow MATLAB through the Windows\n');
-    fprintf('        firewall and check both tags are powered and on WiFi.\n\n');
+    if lower(string(UWB_TRANSPORT)) == "udp"
+        fprintf('  NOTE: if no sweeps arrive, allow MATLAB through the Windows\n');
+        fprintf('        firewall and check both tags are powered and on WiFi.\n\n');
+    else
+        fprintf('  NOTE: if only one tag id arrives, the slave has not joined -\n');
+        fprintf('        check the UART cable and the SHARED GROUND, then watch\n');
+        fprintf('        the WIRE,v1,... status lines for crc/resync counts.\n\n');
+    end
 end
 
 %% ========================================
@@ -273,11 +331,21 @@ metadata.track_width = TRACK_WIDTH;
 metadata.v_max = V_MAX;
 metadata.omega_max = OMEGA_MAX;
 metadata.hardware_interface = 'HardwareManipulatorControl';
+metadata.truth_source = char(TRUTH_SOURCE);   % "dune" (calibrated) | "mms" (legacy)
+if lower(TRUTH_SOURCE) == "dune" && ~isempty(visionCfg)
+    metadata.truth_frame = 'uwb_anchor_frame (DUNE registered extrinsics)';
+    metadata.truth_registration_rmse_m = visionCfg.extrinsics.rmse_m;
+    metadata.truth_apriltag_size_m = visionCfg.apriltag.base.size;
+else
+    metadata.truth_frame = 'mms_world (legacy nadir)';
+end
 metadata.ported_from = ['D:\MMS_Codebase\matlab\slip_analysis\' ...
                         'test_random_excitation_slip_measurement.m'];
 % DUNE/UWB metadata
 metadata.uwb.enabled = UWB_ENABLE;
+metadata.uwb.transport = char(UWB_TRANSPORT);   % "udp" | "serial" (wired tags)
 metadata.uwb.port = UWB_PORT;
+metadata.uwb.tag_com = char(UWB_TAG_COM);
 metadata.uwb.frontTag = UWB_FRONT_TAG;
 metadata.uwb.rearTag = UWB_REAR_TAG;
 metadata.uwb.baseline_m = UWB_BASELINE;
@@ -452,7 +520,8 @@ try
             tS = tic;
             [data, sample_idx] = logDataPointHW(hw, data, sample_idx, current_time, ...
                 segment, V_cmd, omega_cmd, GEAR_RATIO, ...
-                APRILTAG_RETRIES, MAX_RETRIES, RETRY_DELAY);
+                APRILTAG_RETRIES, MAX_RETRIES, RETRY_DELAY, ...
+                TRUTH_SOURCE, visionCfg, APRILTAG_ID);
             tSensors = tSensors + toc(tS);
         end
 
@@ -678,7 +747,8 @@ end
 %% ========================================
 
 function [data, idx] = logDataPointHW(hw, data, idx, time, seg_id, V_cmd, omega_cmd, ...
-                                       gear_ratio, apriltag_retries, max_retries, retry_delay)
+                                       gear_ratio, apriltag_retries, max_retries, retry_delay, ...
+                                       truth_source, vision_cfg, apriltag_id)
     data.time(idx) = time;
     data.segment_id(idx) = seg_id;
     data.V_cmd(idx) = V_cmd;
@@ -688,17 +758,12 @@ function [data, idx] = logDataPointHW(hw, data, idx, time, seg_id, V_cmd, omega_
     % frame grab + detection (~150-280 ms), so the old 3-retry policy cost
     % 500-900 ms whenever the marker was out of view. Missed samples are
     % interpolated offline; a stalled control loop is not recoverable.
-    for retry = 1:apriltag_retries
-        try
-            [roverPos, roverOri] = hw.getRoverPose();
-            if ~isempty(roverPos)
-                data.apriltag_pos(idx, :) = roverPos(:)';
-                data.apriltag_euler(idx, :) = roverOri(:)';
-                break;
-            end
-        catch
-            if retry < apriltag_retries, pause(retry_delay); end
-        end
+    % Source (DUNE calibrated vs MMS legacy) is chosen by TRUTH_SOURCE.
+    [roverPos, roverOri, det] = getTruthPose(hw, truth_source, vision_cfg, ...
+                                             apriltag_id, apriltag_retries, retry_delay);
+    if det
+        data.apriltag_pos(idx, :) = roverPos;
+        data.apriltag_euler(idx, :) = roverOri;
     end
 
     for retry = 1:max_retries
@@ -789,5 +854,30 @@ function checkKeyboardStopHW(fig, event, hw)
     key = event.Key;
     if strcmpi(key, 'space') || strcmpi(key, 'escape') || strcmpi(key, 'q')
         triggerEmergencyStopHW(fig, hw, false);
+    end
+end
+
+function [pos, ori, det] = getTruthPose(hw, source, visionCfg, tagId, retries, retryDelay)
+    %GETTRUTHPOSE One AprilTag world pose from the selected ground-truth source.
+    %   "dune" - hw.getColorFrame() (read-only MMS call) + DUNE calibrated
+    %            vision (getAprilTagPoseFromFrame): truth in the UWB anchor frame.
+    %   "mms"  - hw.getRoverPose(): legacy MMS intrinsics + nadir transform.
+    %   Returns pos [1x3] / ori [1x3] as row vectors and det (logical). Both
+    %   sources cost one Kinect frame grab per attempt.
+    pos = [nan nan nan]; ori = [nan nan nan]; det = false;
+    for r = 1:retries
+        try
+            if lower(string(source)) == "dune"
+                rgb = hw.getColorFrame();
+                [p, o, ~, isDet] = getAprilTagPoseFromFrame(rgb, visionCfg, tagId);
+                if isDet, pos = p(:)'; ori = o(:)'; det = true; return; end
+            else
+                [p, o] = hw.getRoverPose();
+                if ~isempty(p), pos = p(:)'; ori = o(:)'; det = true; return; end
+            end
+        catch
+            % swallow: a missed detection is interpolated offline; never stall
+        end
+        if r < retries, pause(retryDelay); end
     end
 end

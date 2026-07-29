@@ -1,0 +1,41 @@
+\section{Implementation and Reproducibility}
+\label{sec:impl}
+
+The complete system is released at
+\url{https://github.com/AdershM-2/UWB_3}. The host stack is a MATLAB
+package (\texttt{+dune}) with supporting scripts
+(Table~\ref{tab:sw}); the firmware comprises three Arduino sketches for
+the anchor and the two tag variants. The ingest layer is
+protocol-agnostic---a sweep is a set of (anchor,\,range,\,quality)
+samples---so the estimators consume live serial data and replayed logs
+identically, and estimation is kept out of the real-time driving loop,
+which only records. The two calibration files that reproduce the accuracy
+are \texttt{delay\_calibration.json} (per-anchor antenna delays, in
+\SI{4.69}{\milli\meter} ticks) and \texttt{range\_correction.json}
+(the per-anchor first-path-power coefficients of~\eqref{eq:power}); both
+load automatically in \texttt{solveSweep}. The static-campaign readings,
+driven-run recordings, and an extended engineering report are released
+alongside the code.
+
+\begin{table}[t]
+  \centering
+  \caption{Key released software modules.}
+  \label{tab:sw}
+  \footnotesize
+  \begin{tabular}{@{}lp{4.7cm}@{}}
+    \toprule
+    \textbf{Module} & \textbf{Function}\\
+    \midrule
+    \texttt{Anchor.ino}, \texttt{Tag*.ino} & DW1000 DS-TWR firmware
+      (anchor and two tag variants).\\
+    \texttt{+dune/solveSweep}       & Calibrate, weight, and solve one sweep.\\
+    \texttt{+dune/multilaterate}    & Robust weighted least-squares solver,~\eqref{eq:ls}.\\
+    \texttt{+dune/gapWeights}       & First-path-power NLOS weights,~\eqref{eq:nlos}.\\
+    \texttt{+dune/MheEstimator}     & Moving-horizon estimator (CasADi/IPOPT),~\eqref{eq:mhe}.\\
+    \texttt{+dune/MheRigid}         & Two-tag rigid-body estimator.\\
+    \texttt{tune\_delays\_sweep.m}  & Over-the-air antenna-delay calibration.\\
+    \texttt{survey\_reconstruct.m}  & Multidimensional-scaling anchor self-survey.\\
+    \texttt{rover\_run\_report.m}   & Driven-run scoring against Kinect truth.\\
+    \bottomrule
+  \end{tabular}
+\end{table}

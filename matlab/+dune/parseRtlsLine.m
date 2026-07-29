@@ -18,6 +18,7 @@ function s = parseRtlsLine(line)
 %     s.tex [n]     realised exchange start ms (NaN on v3)
 %     s.tempC, s.vbat   tag die temperature / battery (NaN when absent)
 %     s.imu = [] or struct(status, quat[4], acc[3], gyro[3])
+%     s.cycle, s.mrxUs  TagLink cycle id / master receive time (NaN when absent)
 
 % Raw carrier integrator -> ppm (Decawave constants, 110 kbps mode, channel 5:
 % Fs/2 correction 998.4e6/2/8192/131072 Hz per LSB, carrier 6489.6 MHz; the
@@ -70,5 +71,22 @@ if p <= numel(tok) && tok(p) == "IMU" && numel(tok) >= p + 11
     v = double(tok(p+1:p+11));
     s.imu = struct('status', v(1), 'quat', v(2:5)', ...
                    'acc', v(6:8)', 'gyro', v(9:11)');
+    p = p + 12;
+end
+
+% TagLink tails, appended by the MASTER in wired dual-tag mode:
+%   ,CYC,<cycle>              on its own lines
+%   ,CYC,<cycle>,MRX,<us>     on lines forwarded from the slave
+% Both are optional and absent in ring/WiFi mode. MRX is the master's own
+% esp_timer clock when the slave's frame landed; s.tms stays the OWNING tag's
+% clock, never rewritten, so a join on cycle gives slave-clock, master-receive
+% and cycle-start references for the same measurement.
+s.cycle = NaN; s.mrxUs = NaN;
+if p <= numel(tok) && tok(p) == "CYC" && numel(tok) >= p + 1
+    s.cycle = double(tok(p+1));
+    p = p + 2;
+    if p <= numel(tok) && tok(p) == "MRX" && numel(tok) >= p + 1
+        s.mrxUs = double(tok(p+1));
+    end
 end
 end

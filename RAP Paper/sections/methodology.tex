@@ -1,0 +1,146 @@
+\section{Methodology}
+\label{sec:method}
+
+\subsection{Ranging and range calibration}
+Each range is obtained by a double-sided two-way exchange (DS-TWR),
+whose symmetric four-timestamp formulation cancels the clock-frequency
+offset between the two uncoordinated crystals to first
+order~\cite{dstwr_neirynck} (Fig.~\ref{fig:dstwr}). One DW1000 timer
+tick corresponds to \SI{4.69}{\milli\meter} of range and sets the
+resolution of every calibration constant below. The two systematic
+biases in~\eqref{eq:measmodel} are removed in sequence. The
+antenna-delay term $\delta_k$, which reflects the propagation time
+internal to each board, is calibrated per anchor against a reference
+position and stored on the device, after which all anchors agree with
+the reference distance to within $\pm\SI{16}{\milli\meter}$. The
+residual power-dependent bias $\gamma_k$ is modelled per anchor as an
+affine function of the first-path power $P_{\mathrm{fp}}$, which is more
+stable than total power,
+\begin{equation}
+  \hat{d}_k = \rho_k - \big(a_k\,P_{\mathrm{fp},k} + b_k\big),
+  \qquad a_k\in[7.7,\,9.5]\ \si{\milli\meter\per\dB},
+  \label{eq:power}
+\end{equation}
+with $P_{\mathrm{fp}}$ clamped to the fitted interval so that the model
+is never extrapolated. The coefficients are estimated once by
+leave-one-position-out regression over a static campaign.
+
+\begin{figure}[t]
+  \centering
+  \begin{tikzpicture}[font=\small, >={Stealth[length=2.2mm]}, yscale=0.9]
+    \node[font=\bfseries, text=cBlue]  at (0,0.4)  {Tag};
+    \node[font=\bfseries, text=cAmber] at (4.6,0.4){Anchor};
+    \draw[cBlue!55, line width=1pt]  (0,0.1)   -- (0,-5.4);
+    \draw[cAmber!70, line width=1pt] (4.6,0.1) -- (4.6,-5.4);
+    \draw[->, line width=1pt, draw=cBlue]  (0,-0.3)  -- node[above,sloped,font=\scriptsize]{Poll}     (4.6,-0.9);
+    \draw[->, line width=1pt, draw=cAmber] (4.6,-2.0) -- node[above,sloped,font=\scriptsize]{Response} (0,-2.6);
+    \draw[->, line width=1pt, draw=cBlue]  (0,-3.7)  -- node[above,sloped,font=\scriptsize]{Final}    (4.6,-4.3);
+    \foreach \y/\t in {-0.3/t_1, -2.6/t_2, -3.7/t_3} \node[left=1pt,font=\scriptsize] at (0,\y) {$\t$};
+    \foreach \y/\t in {-0.9/t_4, -2.0/t_5, -4.3/t_6} \node[right=1pt,font=\scriptsize] at (4.6,\y) {$\t$};
+    \draw[decorate,decoration={brace,amplitude=4pt},cGray]
+      (-0.75,-0.3) -- node[left=4pt,font=\scriptsize]{$T_{\mathrm{round}1}$} (-0.75,-2.6);
+    \draw[decorate,decoration={brace,amplitude=4pt},cGray]
+      (-0.75,-2.6) -- node[left=4pt,font=\scriptsize]{$T_{\mathrm{reply}2}$} (-0.75,-3.7);
+    \draw[decorate,decoration={brace,amplitude=4pt,mirror},cGray]
+      (5.35,-0.9) -- node[right=4pt,font=\scriptsize]{$T_{\mathrm{reply}1}$} (5.35,-2.0);
+    \draw[decorate,decoration={brace,amplitude=4pt,mirror},cGray]
+      (5.35,-2.0) -- node[right=4pt,font=\scriptsize]{$T_{\mathrm{round}2}$} (5.35,-4.3);
+  \end{tikzpicture}
+  \caption{Double-sided two-way ranging. Four host-side timestamps over
+  two round trips recover the time-of-flight without a shared clock; the
+  symmetric form is first-order insensitive to crystal frequency offset.}
+  \label{fig:dstwr}
+\end{figure}
+
+\subsection{Robust NLOS-aware estimation}
+Under obstruction the first signal component is attenuated relative to
+the total received energy, so the gap between total and first-path power
+is a direct indicator of the NLOS excess $\Delta_{ik}$
+(Fig.~\ref{fig:nlos}). Denoting this gap $g_k = P_{\mathrm{rx},k} -
+P_{\mathrm{fp},k}$ in decibels, each range is assigned a continuous
+weight
+\begin{equation}
+  w_k = \max\!\Big(w_{\mathrm{f}},\ 10^{-\max(0,\,g_k-\tau)/10}\Big),
+  \label{eq:nlos}
+\end{equation}
+with LOS threshold $\tau=\SI{3}{\dB}$ and floor $w_{\mathrm{f}}=0.05$:
+below the threshold a range keeps unit weight, above it the weight decays
+with the excess gap, and the floor prevents any single anchor from being
+discarded outright. The instantaneous fix follows from robust weighted
+multilateration,
+\begin{equation}
+  \pvec^\star = \arg\min_{\pvec}\;
+  \sum_{k=1}^{N} w_k\,\rho_\delta\!\big(\lVert \pvec-\avec_k\rVert - \hat{d}_k\big),
+  \label{eq:ls}
+\end{equation}
+where $\rho_\delta$ is the Huber loss and a $\chi^2$ consistency gate
+rejects gross outliers, so that an inconsistent range bends rather than
+dominates the solution.
+
+The trajectory itself is estimated by a moving-horizon estimator (MHE)
+that, at each step, jointly optimizes the last $N_{\mathrm{h}}$ states
+($N_{\mathrm{h}}{=}10$, $\approx\!\SI{2}{\second}$) so that new evidence
+can revise the recent estimate:
+\begin{equation}
+\begin{aligned}
+  \min_{\{\xvec_k\}}\ &
+  \sum_{k}\sum_{j} w_{kj}\,\rho_\delta\!\big(\lVert\pvec_k-\avec_j\rVert - \hat{d}_{kj}\big)\\[-1pt]
+  &{}+ \sum_{k}\big\lVert \xvec_{k+1}-f(\xvec_k)\big\rVert^2_{Q^{-1}}
+  + \big\lVert \xvec_1-\bar{\xvec}\big\rVert^2_{P^{-1}},
+\end{aligned}
+\label{eq:mhe}
+\end{equation}
+where the first term fits every windowed range under the same weighted
+robust loss, the second penalizes departures from the kinematic motion
+model $f(\cdot)$, and the third is an arrival cost coupling the window to
+the previous estimate. The same weights $w_{kj}$ scale the measurement
+variances, so the NLOS score governs both the fix and the filter. The
+IMU contributes only differential quantities---yaw rate and
+gravity-referenced roll and pitch---never an absolute heading; because
+the Ackermann platform cannot slip laterally, $f(\cdot)$ constrains the
+body velocity to the heading direction. For two tags, the rigid
+constraint~\eqref{eq:rigid} is imposed by construction, so a single body
+state generates both tag predictions, the baseline is exact in every
+solution, and the heading is observed directly by the radios with a
+per-reading resolution $\sigma_\psi \approx \sqrt{2}\,\sigma_d/L$
+($\approx\!4.6^\circ$ for $\sigma_d\!=\!30$\,mm, $L\!=\!0.527$\,m),
+further reduced by filtering.
+
+\begin{figure}[t]
+  \centering
+  \begin{tikzpicture}[font=\small, >={Stealth[length=2.2mm]}]
+    \draw[cGray!50, line width=1pt] (-0.3,-1.5) -- (7.1,-1.5);
+    \node[cGray, font=\scriptsize] at (6.7,-1.7) {floor};
+    \fill[cGray!25, draw=cGray!70] (3.3,-1.5) rectangle (3.9,1.15);
+    \node[cGray!80!black, font=\scriptsize\bfseries, align=center] at (3.6,1.5) {obstacle};
+    \node[circle, draw=cBlue, fill=cBlueL, line width=1pt, inner sep=2.5pt]
+      (tag) at (0,0) {\footnotesize\bfseries Tag};
+    \node[rectangle, rounded corners=2pt, draw=cAmber, fill=cAmberL,
+      line width=1pt, inner sep=3.5pt] (anc) at (6.6,0) {\footnotesize\bfseries Anchor};
+    \draw[dashed, cGray, line width=1pt] (tag) -- (anc);
+    \node[cRed, font=\bfseries] at (3.6,0) {$\times$};
+    \node[cRed, font=\scriptsize\bfseries, align=center] at (2.05,0.32) {direct path\\ blocked};
+    \draw[cGreen, line width=1.4pt, rounded corners=6pt]
+      (tag.south) -- (1.7,-1.15) -- (3.6,-1.15) -- (5.2,-1.15) -- (anc.south);
+    \node[cGreen!60!black, font=\scriptsize] at (3.6,-0.95) {reflected / diffracted};
+    \node[align=center, font=\small] at (3.3,0.78) {$\rho_k = d + \Delta_k,\ \ \Delta_k>0$};
+  \end{tikzpicture}
+  \caption{NLOS mechanism. When the direct path is obstructed the signal
+  reaches the anchor along a longer reflected or diffracted route, so the
+  measured range is biased positively by $\Delta_k$. The bias is
+  estimated from the total-to-first-path power gap and used to weight the
+  range through~\eqref{eq:nlos}.}
+  \label{fig:nlos}
+\end{figure}
+
+\subsection{Automatic anchor localization}
+When the anchor coordinates are not measured externally, they are
+recovered from the ten pairwise inter-anchor ranges of the five-anchor
+set. A set of mutual distances defines a rigid configuration up to an
+isometry, and classical multidimensional scaling~\cite{torgerson1952mds}
+returns the point set whose pairwise distances best match the measured
+ranges. The triggering tag only relays messages, so its own antenna
+delay does not enter the survey. The recovered constellation is
+determined up to a rotation and reflection, resolved against a single
+known landmark or, for evaluation, aligned to a reference layout without
+scaling.

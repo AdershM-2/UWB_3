@@ -1,0 +1,100 @@
+% ---------------------------------------------------------------
+% FIG 1 — system pipeline (native TikZ, full width)
+% ---------------------------------------------------------------
+\begin{figure*}[t]
+  \centering
+  \begin{tikzpicture}[
+    font=\small,
+    >={Stealth[length=2.2mm,width=1.8mm]},
+    blk/.style={rectangle, rounded corners=2.5pt, draw, line width=0.7pt,
+      minimum height=12mm, text width=19mm, align=center, inner sep=3pt},
+    flow/.style={-{Stealth[length=2.2mm,width=1.8mm]}, line width=1pt, draw=cGray},
+    lbl/.style={font=\scriptsize\itshape, text=cGray, inner sep=1.5pt},
+    node distance=8mm and 8.5mm]
+
+    \node[blk, draw=cBlue,  fill=cBlueL]  (fw)   {DS-TWR firmware\\ \footnotesize DW1000\,+\,ESP32};
+    \node[blk, draw=cAmber, fill=cAmberL, right=of fw]   (cal)  {Range calib.\\ \footnotesize delay\,+\,power};
+    \node[blk, draw=cAmber, fill=cAmberL, right=of cal]  (nlos) {NLOS weight\\ \footnotesize first-path pwr};
+    \node[blk, draw=cRed,   fill=cRedL,   right=of nlos] (fix)  {Robust\\ weighted LS};
+    \node[blk, draw=cGreen, fill=cGreenL, right=of fix]  (est)  {MHE\,+\,rigid\\ \footnotesize body ($+$IMU)};
+    \node[blk, draw=cGreen!60!black, fill=cGreen!22, right=of est, text width=22mm]
+      (pose) {Pose\\ \footnotesize $x,y,z,\phi,\theta,\psi$};
+
+    \node[blk, draw=cGray, fill=cGrayL, below=9mm of nlos, text width=24mm]
+      (surv) {Anchor self-survey \\ \footnotesize inter-anchor ranging};
+
+    \draw[flow] (fw)   -- node[lbl,above]{ranges,} node[lbl,below]{FP/RX pwr}  (cal);
+    \draw[flow] (cal)  -- (nlos);
+    \draw[flow] (nlos) -- (fix);
+    \draw[flow] (fix)  -- (est);
+    \draw[flow] (est)  -- (pose);
+    \draw[flow] (surv.east) -| (fix.south);
+
+    \begin{scope}[on background layer]
+      \node[draw=cBlue!50, dashed, rounded corners, inner sep=5pt,
+        fit=(fw), label={[cBlue,font=\scriptsize\bfseries]above:Radio (ESP32)}] {};
+      \node[draw=cGreen!45, dashed, rounded corners, inner sep=5pt,
+        fit=(cal)(pose)(surv),
+        label={[cGreen!60!black,font=\scriptsize\bfseries]above:MATLAB host}] {};
+    \end{scope}
+  \end{tikzpicture}
+  \caption{The DUNE pipeline. Five DW1000 anchors and one or two ESP32
+  tags perform double-sided two-way ranging; the host calibrates each
+  range for antenna delay and received-power bias, weights it by a
+  first-path NLOS score, solves a robust least-squares fix, and fuses
+  the stream in a moving-horizon estimator with a two-tag rigid-body
+  constraint. Anchor coordinates are supplied by an inter-anchor
+  self-survey, and roll, pitch, and height are read from the on-board
+  IMU to complete the six-degree-of-freedom pose.}
+  \label{fig:pipeline}
+\end{figure*}
+
+\section{Introduction}
+\label{sec:intro}
+
+\IEEEPARstart{A}{ccurate} indoor localization is a prerequisite for
+autonomous mobile robots operating where satellite navigation is
+unavailable. Among the candidate technologies, ultra-wideband (UWB)
+ranging offers a favourable combination of centimetre-level time-of-flight
+resolution, robustness to multipath relative to narrowband radio, and
+low unit cost, and it has become a common choice for real-time
+localization systems~\cite{alarifi2016uwb}. A single DW1000 transceiver
+can time a radio round trip to a few centimetres, and the underlying
+two-way ranging and multilateration are well established~\cite{dstwr_neirynck}.
+
+In practice, however, a substantial gap separates this nominal ranging
+resolution from the pose accuracy a robot experiences during operation.
+Raw transceiver ranges carry hardware- and signal-dependent biases of
+several decimetres; obstructed, non-line-of-sight (NLOS) paths inflate
+the measured distance without any external indication; and the anchor
+coordinates that anchor the whole solution must themselves be obtained,
+conventionally by manual survey or an external camera on which the
+deployment then depends. Closing this gap is largely a matter of
+engineering that is seldom reported in reproducible detail, so each new
+deployment tends to repeat it.
+
+This paper documents a complete, low-cost UWB positioning stack, DUNE,
+that addresses these issues end to end and is released in full. The
+system localizes a small Ackermann rover from five fixed DW1000 anchors
+and one or two ESP32-hosted tags, with all estimation performed on a
+host computer (Fig.~\ref{fig:pipeline}). The design targets
+reproducibility on commodity hardware rather than a single algorithmic
+novelty, and its accuracy derives from the disciplined combination of
+calibration, NLOS-aware estimation, and automatic infrastructure
+localization described in the following sections.
+
+The main contributions are:
+\begin{enumerate}
+  \item A complete and openly released pipeline from raw double-sided
+  two-way ranging to a filtered vehicle pose, including a two-step radio
+  calibration (antenna delay and received-power range bias). Unlike
+  common open DW1000 libraries, which target a fixed small anchor set,
+  the pipeline supports an arbitrary number of anchors ($N\!\ge\!4$) and
+  degrades gracefully when only a subset responds.
+  \item A continuous first-path-power NLOS weighting integrated with a
+  robust weighted least-squares solver and a moving-horizon estimator
+  that enforces a two-tag rigid-body constraint to recover heading.
+  \item An automatic anchor self-localization procedure that recovers
+  the anchor geometry from inter-anchor ranging alone, eliminating the
+  need for an external survey of the infrastructure.
+\end{enumerate}

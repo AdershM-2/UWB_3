@@ -15,6 +15,18 @@ arguments
     opts.casadiPath string = "C:\Users\itisa\Downloads\casadi-3.7.0"
     opts.runMhe (1,1) logical = true
     opts.plot (1,1) logical = true
+    opts.anchorsFile string = ""   % override anchors.json (e.g. a self-survey
+                                   % geometry) to test a Kinect-free constellation
+    opts.mheSpeedMax (1,1) double = 0.15       % MHE body-speed bound (m/s)
+    opts.mheAllowReverse double = []           % [] = auto-detect from V_cmd;
+                                               % true/false forces the bound (for
+                                               % A/B testing the constraint)
+    opts.trimStartS (1,1) double = 0           % s dropped from the START of the
+                                               % truth-alignment window (pickup/
+                                               % settle transient). The MHE still
+                                               % runs over the FULL log for warm-up
+                                               % continuity; only SCORING is trimmed.
+    opts.trimEndS (1,1) double = 0             % s dropped from the END (set-down)
 end
 
 if isfolder(opts.casadiPath), addpath(char(opts.casadiPath)); end
@@ -28,7 +40,12 @@ fprintf('Loading %s\n', matFile);
 S = load(matFile);
 data = S.data; meta = S.metadata;
 uwb = data.uwb;
-A = dune.loadAnchors();
+if opts.anchorsFile == ""
+    A = dune.loadAnchors();
+else
+    A = dune.loadAnchors(opts.anchorsFile);
+    fprintf('ANCHORS OVERRIDE: %s\n', opts.anchorsFile);
+end
 RC = dune.loadRangeCorrection();
 
 L = meta.uwb.baseline_m;
@@ -59,6 +76,22 @@ Pose = nan(nS, 4);
 if opts.runMhe
     mr = dune.MheRigid(A.pos);
     mr.baseline = L; mr.horizon = 12; mr.tagZ = 0.24;
+    % Forward-only bound WHEN the run never actually commanded reverse - read
+    % straight from the logged V_cmd, so re-scoring can never silently corrupt a
+    % run that did reverse (rover_teleop_uwb's R1 sends V_cmd < 0). Forward-only
+    % removes the unicycle sign-flip degeneracy; see dune.MheRigid.
+    if isempty(opts.mheAllowReverse)
+        revUsed = isfield(data, 'V_cmd') && any(data.V_cmd < -0.005);
+    else
+        revUsed = logical(opts.mheAllowReverse);   % forced (A/B test)
+    end
+    mr.speedMax = opts.mheSpeedMax;
+    mr.allowReverse = revUsed;
+    if revUsed
+        fprintf('MHE speed bound: symmetric |v|<=%.2f m/s\n', mr.speedMax);
+    else
+        fprintf('MHE speed bound: FORWARD-ONLY [0, %.2f] m/s\n', mr.speedMax);
+    end
     mr.build();
     % still / omega / pitch per sweep
     Vc = interp1(data.t_posix, data.V_cmd, uwb.t_posix, 'previous', 'extrap');
@@ -99,6 +132,17 @@ cT = xyT - [cos(yawT).*offBody(1) - sin(yawT).*offBody(2), ...
             sin(yawT).*offBody(1) + cos(yawT).*offBody(2)];
 fprintf('AprilTag truth samples: %d (%.0f%% of rover samples)\n', ...
         sum(okT), 100*mean(okT));
+
+%% ---- trim start/end pickup transients from SCORING only -----------------
+% The MHE above already ran over the full log (needed for warm-up/continuity);
+% this only narrows the window used for truth alignment and RMSE, so a
+% hand-lift at the start/end doesn't count against the estimator.
+if opts.trimStartS > 0 || opts.trimEndS > 0
+    tKeep = tT >= (tT(1) + opts.trimStartS) & tT <= (tT(end) - opts.trimEndS);
+    fprintf('trim: dropping %.1fs start / %.1fs end -> %d/%d truth samples kept\n', ...
+            opts.trimStartS, opts.trimEndS, sum(tKeep), numel(tT));
+    tT = tT(tKeep); cT = cT(tKeep, :);
+end
 
 %% ---- align UWB estimate to truth times, fit 2D rigid transform ----------
 out = struct('file', matFile, 'Praw', Praw, 'Pose', Pose, 'cT', cT, 'tT', tT);

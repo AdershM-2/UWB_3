@@ -49,11 +49,33 @@ classdef MheRigid < handle
         huberDelta = 0.15      % robust range-residual threshold (m)
         zuptSigma  = 0.03      % zero-speed pseudo-measurement sigma (m/s)
         maxJump    = 0.20      % jump-guard threshold on the centre (m)
+        % Bounds on X(4,:) (body speed), applied every solve. Without ANY bound
+        % the optimizer can explain one noisy sweep with an unphysical speed
+        % spike that unwinds on the next solve - a direct jitter source, seen
+        % as a nonzero fused speed while the rig is stationary. speedMax has
+        % margin above the commanded V_MAX (0.10 m/s in rover_teleop_uwb.m).
+        %
+        % allowReverse chooses the LOWER bound:
+        %   true  (default) -> [-speedMax, speedMax], reverse representable.
+        %   false           -> [0, speedMax], forward-only.
+        % Forward-only is not merely tighter: the unicycle parameterisation is
+        % sign-ambiguous - (speed +v, psi th) and (speed -v, psi th+180deg) give
+        % the SAME velocity. Near standstill the gyro barely breaks that tie, so
+        % the estimator flips between them (heading snaps ~180deg, speed flickers
+        % sign). Forbidding reverse removes one whole solution branch, killing
+        % that flip. Only set false when the rig truly never reverses - the model
+        % itself defaults to the physically-general symmetric bound; callers that
+        % KNOW their rover is forward-only (live_rover, or rover_run_report when
+        % the logged V_cmd never went negative) opt in.
+        % Both must be set BEFORE build().
+        speedMax     = 0.15    % m/s
+        allowReverse = true    % false -> forward-only (see above)
         maxIter    = 80
     end
     properties (SetAccess = private)
         A, M
         solver
+        lb, ub          % decision-variable bounds (speedMax), built once in build()
         built = false
         buf = {}
         Xw = []
@@ -127,6 +149,16 @@ classdef MheRigid < handle
                 struct('print_level', 0, 'sb', 'yes', 'max_iter', obj.maxIter, ...
                        'tol', 1e-5, 'acceptable_tol', 1e-4, 'mu_strategy', 'adaptive'));
             obj.solver = nlpsol('mheRigid', 'ipopt', nlp, opts);
+
+            % Bounds: only X(4,:) (speed) is constrained. Upper = speedMax;
+            % lower = -speedMax (reverse allowed) or 0 (forward-only), per
+            % allowReverse. cx/cy/psi stay free (position is anchor-observed;
+            % psi enters only via cos/sin so it has no natural wrap bound here).
+            lbm = -inf(4, N); ubm = inf(4, N);
+            ubm(4,:) = obj.speedMax;
+            lbm(4,:) = -obj.speedMax * double(obj.allowReverse);   % 0 if forward-only
+            obj.lb = lbm(:); obj.ub = ubm(:);
+
             obj.built = true;
         end
 
@@ -190,7 +222,7 @@ classdef MheRigid < handle
             end
             Pv = [Zm(:); Wm(:); SG; LHv; TZv; DTv; OMv; STv; pr];
 
-            r = obj.solver('x0', X0, 'p', Pv);
+            r = obj.solver('x0', X0, 'p', Pv, 'lbx', obj.lb, 'ubx', obj.ub);
             X = full(r.x);
             obj.nSolves = obj.nSolves + 1;
             Xm = reshape(X, 4, N);
